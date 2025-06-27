@@ -436,7 +436,7 @@ API服务类，负责调用各种AI API.
             else:
                 # 增强错误提示，为所有测试失败的情况增加通用建议
                 enhanced_error = f"{group_name}API连接失败 (检测类型: {detected_type}): {error}"
-                suggestion = "\n\n💡 请检查您的API URL、API Key和模型ID是否正确，并确保网络通畅、账户有足够余额。"
+                suggestion = "\n\n💡 请检查您输入的API URL、Key、ID。必须使用视觉模型，确保账户余额充足。"
                 return False, enhanced_error + suggestion
         except Exception as e:
             error_detail = traceback.format_exc()
