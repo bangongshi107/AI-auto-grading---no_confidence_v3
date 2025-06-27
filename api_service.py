@@ -72,7 +72,7 @@ API服务类，负责调用各种AI API.
                 "payload_template_type": "volcengine_vision_v1",
                 "auth_method": "bearer",
                 "auth_header": "Authorization",
-                "image_url_format": "pure_base64",
+                # Base64编码的图片必须是带有前缀的Data URI格式, e.g., "data:image/jpeg;base64,<Base64编码>"
                 "url_needs_token": False,
                 "status": "stable"
             },
@@ -192,21 +192,10 @@ API服务类，负责调用各种AI API.
 
     def _call_api_with_adaptive_strategy(self, api_url: str, api_key: str, model_id: str, img_str: str, prompt: str, api_type: str, api_group: str):
         url_candidates = self._standardize_api_endpoint(api_url, api_type)
-        print(f"[API] (统一策略) API类型: {api_type}, URL候选列表: {url_candidates}")
+        print(f"[API] (优化策略) API类型: {api_type}, URL候选列表: {url_candidates}")
         api_config = self.specific_api_configs.get(api_type, {})
         payload_template_type = api_config.get("payload_template_type", "openai_vision_v1")
-        print(f"[API] (统一策略) 使用的Payload模板: {payload_template_type}")
-
-        # 混合模式：确定图片格式候选列表
-        image_format_candidates = []
-        if api_config.get("image_url_format"):
-            # 专家知识优先
-            image_format_candidates.append(api_config.get("image_url_format"))
-            print(f"[API] 使用专家配置的图片格式: {image_format_candidates}")
-        else:
-            # 启动自动探测序列
-            image_format_candidates.extend(["data_uri", "pure_base64"])
-            print(f"[API] 未找到专家配置，启动图片格式自动探测: {image_format_candidates}")
+        print(f"[API] (优化策略) 使用的Payload模板: {payload_template_type}")
 
         headers = {"Content-Type": "application/json"}
         if api_config.get("extra_headers"):
@@ -220,69 +209,97 @@ API服务类，负责调用各种AI API.
             headers[auth_header_name] = api_key
 
         for test_url in url_candidates:
-            for image_format in image_format_candidates:
-                if not self.running:
-                    return None, "线程已停止"
-                
-                print(f"[API] (统一策略) 尝试URL: {test_url}, 图片格式: {image_format}")
+            if not self.running:
+                return None, "线程已停止"
 
-                # 动态构建payload
-                temp_api_config = api_config.copy()
-                temp_api_config["image_url_format"] = image_format
-                payload = self._build_payload_from_template(payload_template_type, model_id, img_str, prompt, temp_api_config)
-                if not payload:
-                    print(f"[API] 警告: 为API类型 '{api_type}' 构建请求体失败 (图片格式: {image_format})")
-                    continue
+            # 步骤1: 默认使用 data_uri 格式尝试
+            image_format = "data_uri"
+            print(f"[API] (优化策略) 尝试URL: {test_url}, 默认图片格式: {image_format}")
+            
+            temp_api_config = api_config.copy()
+            temp_api_config["image_url_format"] = image_format
+            payload = self._build_payload_from_template(payload_template_type, model_id, img_str, prompt, temp_api_config)
+            
+            if not payload:
+                print(f"[API] 警告: 为API类型 '{api_type}' 构建请求体失败 (图片格式: {image_format})")
+                continue
 
-                try:
-                    response = self._robust_api_call(test_url, headers, payload, max_retries=1)
-                    if response is None:
-                        print(f"[API] 请求失败，无响应 (URL: {test_url})")
-                        # 在这种情况下，通常是URL问题，可以考虑跳出内层循环
-                        break
+            try:
+                response = self._robust_api_call(test_url, headers, payload, max_retries=1)
+                if response is None:
+                    print(f"[API] 请求失败，无响应 (URL: {test_url})")
+                    break # URL不通，无需尝试其他格式，直接换下一个URL
+
+                # 步骤2: 处理响应
+                if response.status_code == 200:
+                    # 调用成功，处理并返回结果
+                    result_data = response.json()
+                    content = self._extract_response_content(result_data)
+                    if content and len(content) > 10:
+                        print(f"[API] (优化策略) 调用成功！URL: {test_url}, 图片格式: {image_format}")
+                        # 缓存成功策略
+                        final_api_config = temp_api_config.copy()
+                        def successful_payload_builder(m_id, i_str, p_str):
+                            return self._build_payload_from_template(payload_template_type, m_id, i_str, p_str, final_api_config)
+                        strategy_to_cache = {
+                            "type": "unified_adaptive", "api_type_used": api_type, "successful_url": test_url,
+                            "payload_builder": successful_payload_builder, "auth_method": auth_method,
+                            "auth_header": auth_header_name, "extra_headers": api_config.get("extra_headers")
+                        }
+                        if api_group == "first": self.first_api_successful_strategy = strategy_to_cache
+                        elif api_group == "second": self.second_api_successful_strategy = strategy_to_cache
+                        print(f"[API] (优化策略) 已缓存 {api_group} API 的成功策略。")
+                        return content, None
+                    else:
+                        print(f"[API] 响应内容为空或过短: {content}")
+                        # 内容问题，但请求成功，不再回退，继续下一个URL
+                        continue
+
+                elif response.status_code == 400 and img_str: # 仅在有图片时，400才可能与格式有关
+                    # 步骤3: 触发回退机制
+                    print(f"[API] (优化策略) 收到400错误，回退尝试 pure_base64 格式。")
+                    image_format_fallback = "pure_base64"
                     
-                    if response.status_code == 200:
-                        result_data = response.json()
-                        content = self._extract_response_content(result_data)
-                        if content and len(content) > 10:
-                            print(f"[API] (统一策略) 调用成功！URL: {test_url}, 图片格式: {image_format}")
-                            
-                            # 缓存包含了正确图片格式的配置
-                            final_api_config = temp_api_config.copy()
+                    temp_api_config_fallback = api_config.copy()
+                    temp_api_config_fallback["image_url_format"] = image_format_fallback
+                    payload_fallback = self._build_payload_from_template(payload_template_type, model_id, img_str, prompt, temp_api_config_fallback)
+
+                    response_fallback = self._robust_api_call(test_url, headers, payload_fallback, max_retries=1)
+                    if response_fallback and response_fallback.status_code == 200:
+                        result_data_fallback = response_fallback.json()
+                        content_fallback = self._extract_response_content(result_data_fallback)
+                        if content_fallback and len(content_fallback) > 10:
+                            print(f"[API] (优化策略) 回退调用成功！URL: {test_url}, 图片格式: {image_format_fallback}")
+                            # 缓存成功的回退策略
+                            final_api_config = temp_api_config_fallback.copy()
                             def successful_payload_builder(m_id, i_str, p_str):
                                 return self._build_payload_from_template(payload_template_type, m_id, i_str, p_str, final_api_config)
-                            
                             strategy_to_cache = {
                                 "type": "unified_adaptive", "api_type_used": api_type, "successful_url": test_url,
                                 "payload_builder": successful_payload_builder, "auth_method": auth_method,
                                 "auth_header": auth_header_name, "extra_headers": api_config.get("extra_headers")
                             }
-                            if api_group == "first":
-                                self.first_api_successful_strategy = strategy_to_cache
-                            elif api_group == "second":
-                                self.second_api_successful_strategy = strategy_to_cache
-                            print(f"[API] (统一策略) 已缓存 {api_group} API 的成功策略。")
-                            return content, None
-                        else:
-                             print(f"[API] 响应内容为空或过短: {content}")
-                             # 即使内容过短，也可能是成功的信号，但对于我们的场景认为是失败，继续尝试
-                    elif response.status_code == 400: # 400 Bad Request 很可能是图片格式问题
-                        print(f"[API] 请求无效 (400)，可能图片格式错误，尝试下一种格式。")
-                        continue # 继续尝试下一个图片格式
-                    elif response.status_code == 404:
-                        print(f"[API] 端点不存在 (404)，此URL无效，尝试下一个URL。")
-                        break # 跳出图片格式循环，直接尝试下一个URL
-                    else:
-                        error_msg = f"API调用失败 (URL: {test_url}), 状态码: {response.status_code}, 响应: {response.text[:150]}"
-                        print(f"[API] {error_msg}")
-                        # 对于其他错误(如401, 403)，通常也意味着URL或认证问题，可以考虑跳出内层循环
-                        # 为了让探测机制更完整，我们仅在404时跳出内层循环
-                        if len(image_format_candidates) == 1: # 如果不是在探测，就直接返回错误
-                            return None, error_msg
-                except requests.exceptions.RequestException as e:
-                    print(f"[API] 请求异常 (URL: {test_url}): {e}")
-                    # 请求异常通常是URL问题，可以跳到下一个URL
-                    break
+                            if api_group == "first": self.first_api_successful_strategy = strategy_to_cache
+                            elif api_group == "second": self.second_api_successful_strategy = strategy_to_cache
+                            print(f"[API] (优化策略) 已缓存 {api_group} API 的成功回退策略。")
+                            return content_fallback, None
+                    # 如果回退也失败，则记录日志，然后让循环继续到下一个URL
+                    print(f"[API] (优化策略) 回退尝试 pure_base64 格式失败。")
+
+                elif response.status_code == 404:
+                    print(f"[API] 端点不存在 (404)，此URL无效，尝试下一个URL。")
+                    break # 跳出循环，直接尝试下一个URL
+                else:
+                    # 其他错误，不触发回退
+                    error_msg = f"API调用失败 (URL: {test_url}), 状态码: {response.status_code}, 响应: {response.text[:150]}"
+                    print(f"[API] {error_msg}")
+                    # 对于其他错误(如401, 403)，直接尝试下一个URL
+                    continue
+
+            except requests.exceptions.RequestException as e:
+                print(f"[API] 请求异常 (URL: {test_url}): {e}")
+                break # 请求异常通常是URL问题，跳到下一个URL
+
         return None, f"所有URL和图片格式组合均失败 (API类型: {api_type})"
 
     def _extract_response_content(self, response_data: dict) -> str:
