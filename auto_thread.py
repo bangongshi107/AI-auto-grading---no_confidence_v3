@@ -911,7 +911,7 @@ class AutoThread(QThread):
         try:
             # 1. 构建基础记录字典
             record = {
-                'timestamp': datetime.datetime.now().strftime('%Y%m%d_%H%M%S'),
+                'timestamp': datetime.datetime.now().strftime('%Y年%m月%d日_%H点%M分%S秒'),
                 'record_type': 'detail',
                 'question_index': question_index,
                 'total_score': score,
@@ -1002,7 +1002,7 @@ class AutoThread(QThread):
         total_questions = cycle_number * len(self.parameters.get('question_configs', []))
 
         summary_record = {
-            'timestamp': datetime.datetime.now().strftime('%Y%m%d_%H%M%S'),
+            'timestamp': datetime.datetime.now().strftime('%Y年%m月%d日_%H点%M分%S秒'),
             'record_type': 'summary', # <--- 新增此行
             'total_cycles': cycle_number,
             'total_questions_attempted': total_questions,

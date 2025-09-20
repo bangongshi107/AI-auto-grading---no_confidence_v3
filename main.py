@@ -149,7 +149,7 @@ class Application:
                 log_dir.mkdir(exist_ok=True)
                 current_time = datetime.datetime.now()
                 formatted_time = current_time.strftime('%H点%M分%S秒')
-                log_file = log_dir / f"global_error_{current_time.strftime('%Y%m%d')}_{formatted_time}.log"
+                log_file = log_dir / f"global_error_{current_time.strftime('%Y年%m月%d日')}_{formatted_time}.log"
                 with open(log_file, 'w', encoding='utf-8') as f:
                     f.write(error_msg)
             except Exception as e:
@@ -303,7 +303,7 @@ class Application:
 
     def _get_csv_filepath(self, record_data, worker=None):
         """获取CSV文件路径的辅助函数"""
-        timestamp_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+        timestamp_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y年%m月%d日_%H点%M分%S秒'))
         date_str = timestamp_str.split('_')[0]
         time_str = timestamp_str.split('_')[1] if '_' in timestamp_str else '000000'
 

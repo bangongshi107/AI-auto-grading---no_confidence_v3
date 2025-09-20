@@ -5,7 +5,7 @@
 # ==============================================================================
 #
 #  版本: v2.2.1
-#  更新日期: 2025-09-14
+#  更新日期: 2025年09月14日
 #  更新人员: AI Assistant
 #
 #  重大变更:
@@ -222,7 +222,7 @@ class ApiService:
         # 1. 创建规范请求字符串
         algorithm = "TC3-HMAC-SHA256"
         timestamp = int(time.time())
-        date = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d')
+        date = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d')  # 腾讯云签名要求 YYYY-MM-DD 格式
 
         # 规范请求
         canonical_request = self._build_canonical_request(action, payload, host)
