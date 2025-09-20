@@ -229,12 +229,14 @@ class MainWindow(QMainWindow):
         self.log_message("尝试在运行前保存所有配置...")
         if not self.config_manager.save_all_configs_to_file():
             self.log_message("错误：运行前保存配置失败！无法启动自动阅卷。", is_error=True)
-            # 创建可展开的保存失败提示框
+            # 创建完整显示的保存失败提示框
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Critical)
             msg_box.setWindowTitle("保存失败")
-            msg_box.setText("保存配置失败。")
-            msg_box.setDetailedText("请检查日志以获取更多详细信息。")
+            msg_box.setText("保存配置失败。\n\n请检查下方日志以获取更多详细信息。")
+            msg_box.setSizeGripEnabled(True)
+            msg_box.setMinimumSize(500, 200)
+            msg_box.setStyleSheet("QLabel{min-width: 400px;}")
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
             return
@@ -255,12 +257,14 @@ class MainWindow(QMainWindow):
             for q_index in enabled_questions_indices:
                 q_config = self.config_manager.get_question_config(q_index)
                 if not q_config or 'answer_area' not in q_config or not q_config['answer_area']:
-                    # 创建可展开的配置不完整提示框
+                    # 创建完整显示的配置不完整提示框
                     msg_box = QMessageBox(self)
                     msg_box.setIcon(QMessageBox.Warning)
                     msg_box.setWindowTitle("配置不完整")
-                    msg_box.setText(f"请先为第{q_index}题框定答案区域。")
-                    msg_box.setDetailedText(f"第{q_index}题的答案区域配置缺失，请在题目配置对话框中设置答案区域坐标。")
+                    msg_box.setText(f"请先为第{q_index}题框定答案区域。\n\n第{q_index}题的答案区域配置缺失，请在题目配置对话框中设置答案区域坐标。")
+                    msg_box.setSizeGripEnabled(True)
+                    msg_box.setMinimumSize(500, 150)
+                    msg_box.setStyleSheet("QLabel{min-width: 400px;}")
                     msg_box.setStandardButtons(QMessageBox.Ok)
                     msg_box.exec_()
                     return
@@ -325,12 +329,14 @@ class MainWindow(QMainWindow):
             error_details = "\n".join([f"  - {e}" for e in errors])
             final_message = f"{intro}\n{error_details}\n\n请在主界面补充完整后再试。"
 
-            # 创建可展开的错误提示框
+            # 创建完整显示的错误提示框
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle(title)
-            msg_box.setText("自动阅卷无法启动，请检查配置。")
-            msg_box.setDetailedText(final_message)
+            msg_box.setText(final_message)
+            msg_box.setSizeGripEnabled(True)
+            msg_box.setMinimumSize(600, 300)
+            msg_box.setStyleSheet("QLabel{min-width: 500px;}")
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
             return False
@@ -361,22 +367,26 @@ class MainWindow(QMainWindow):
                 if success1: self.log_message("API测试完成：第一组API可正常使用")
                 else: self.log_message("API测试完成：第一组API无法正常使用", is_error=True)
 
-            # 创建可展开的API测试结果提示框
+            # 创建完整显示的API测试结果提示框
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Information)
             msg_box.setWindowTitle("API测试结果")
-            msg_box.setText("API测试已完成。")
-            msg_box.setDetailedText(result_message)
+            msg_box.setText(f"API测试已完成。\n\n{result_message}")
+            msg_box.setSizeGripEnabled(True)
+            msg_box.setMinimumSize(500, 200)
+            msg_box.setStyleSheet("QLabel{min-width: 400px;}")
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
         except Exception as e:
             self.log_message(f"API测试出错: {str(e)}", is_error=True)
-            # 创建可展开的API测试错误提示框
+            # 创建完整显示的API测试错误提示框
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Critical)
             msg_box.setWindowTitle("API测试错误")
-            msg_box.setText("测试过程中发生错误。")
-            msg_box.setDetailedText(f"错误详情:\n{str(e)}")
+            msg_box.setText(f"测试过程中发生错误。\n\n错误详情:\n{str(e)}")
+            msg_box.setSizeGripEnabled(True)
+            msg_box.setMinimumSize(500, 200)
+            msg_box.setStyleSheet("QLabel{min-width: 400px;}")
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
 

@@ -149,7 +149,7 @@ class Application:
                 log_dir.mkdir(exist_ok=True)
                 current_time = datetime.datetime.now()
                 formatted_time = current_time.strftime('%H点%M分%S秒')
-                log_file = log_dir / f"global_error_{current_time.strftime('%Y年%m月%d日')}_{formatted_time}.log"
+                log_file = log_dir / f"global_error_{current_time.strftime('%Y%m%d')}_{formatted_time}.log"
                 with open(log_file, 'w', encoding='utf-8') as f:
                     f.write(error_msg)
             except Exception as e:
@@ -304,8 +304,31 @@ class Application:
     def _get_csv_filepath(self, record_data, worker=None):
         """获取CSV文件路径的辅助函数"""
         timestamp_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y年%m月%d日_%H点%M分%S秒'))
-        date_str = timestamp_str.split('_')[0]
-        time_str = timestamp_str.split('_')[1] if '_' in timestamp_str else '000000'
+
+        # 处理日期字符串，支持中文格式
+        if '_' in timestamp_str:
+            date_str = timestamp_str.split('_')[0]
+            time_str = timestamp_str.split('_')[1]
+        else:
+            # 如果没有下划线，使用当前时间
+            now = datetime.datetime.now()
+            date_str = now.strftime('%Y年%m月%d日')
+            time_str = now.strftime('%H点%M分%S秒')
+
+        # 转换日期格式：从中文格式提取数字部分用于目录命名
+        if '年' in date_str and '月' in date_str and '日' in date_str:
+            # 中文格式：2025年09月20日 -> 20250920
+            try:
+                year = date_str.split('年')[0]
+                month = date_str.split('年')[1].split('月')[0].zfill(2)
+                day = date_str.split('月')[1].split('日')[0].zfill(2)
+                numeric_date_str = f"{year}{month}{day}"
+            except (IndexError, ValueError):
+                # 如果解析失败，使用当前日期
+                numeric_date_str = datetime.datetime.now().strftime('%Y%m%d')
+        else:
+            # 假设已经是数字格式或使用当前日期
+            numeric_date_str = date_str if date_str.isdigit() and len(date_str) == 8 else datetime.datetime.now().strftime('%Y%m%d')
 
         if getattr(sys, 'frozen', False):
             base_dir = pathlib.Path(sys.executable).parent
@@ -315,7 +338,7 @@ class Application:
         record_dir = base_dir / "阅卷记录"
         record_dir.mkdir(exist_ok=True)
 
-        date_dir = record_dir / date_str
+        date_dir = record_dir / numeric_date_str
         date_dir.mkdir(exist_ok=True)
 
         if worker:
@@ -328,8 +351,21 @@ class Application:
         if question_count == 0:
             question_count = 1
 
-        formatted_date = datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
-        formatted_time = f"{time_str[:2]}点{time_str[2:4]}分{time_str[4:6]}秒"
+        # 保持时间字符串为中文格式（用户要求）
+        if '点' in time_str and '分' in time_str and '秒' in time_str:
+            formatted_time = time_str
+        else:
+            # 如果时间不是中文格式，尝试转换
+            try:
+                if len(time_str) == 6 and time_str.isdigit():
+                    formatted_time = f"{time_str[:2]}点{time_str[2:4]}分{time_str[4:6]}秒"
+                else:
+                    formatted_time = datetime.datetime.now().strftime('%H点%M分%S秒')
+            except:
+                formatted_time = datetime.datetime.now().strftime('%H点%M分%S秒')
+
+        # 保持日期为中文格式（用户要求）
+        formatted_date = date_str  # 直接使用中文格式的日期
         csv_filename = f"{formatted_date}_{formatted_time}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
         csv_filepath = date_dir / csv_filename
 
