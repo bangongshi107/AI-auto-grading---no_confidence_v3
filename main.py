@@ -22,7 +22,8 @@ class SimpleNotificationDialog(QDialog):
 
     def setup_ui(self, title, message):
         self.setWindowTitle(title)
-        self.setFixedSize(350, 150)
+        self.setMinimumSize(300, 100)
+        self.setMaximumSize(600, 400)
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
