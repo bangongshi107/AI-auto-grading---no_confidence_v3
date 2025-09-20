@@ -287,13 +287,6 @@ class MainWindow(QMainWindow):
                 'is_single_question_one_run': is_single_q1_run
             }
 
-            # 多题模式下隐藏所有答案框窗口，避免截图时互相遮挡
-            if len(enabled_questions_indices) > 1:
-                for window in list(self.answer_windows.values()):
-                    if window and window.isVisible():
-                        window.hide()
-                        self.log_message(f"多题模式：隐藏第{window.question_index}题答案框窗口")
-
             self.worker.set_parameters(**params)
             self.worker.start()
             self.update_ui_state(is_running=True)

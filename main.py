@@ -146,7 +146,9 @@ class Application:
 
                 log_dir = base_dir / "logs"
                 log_dir.mkdir(exist_ok=True)
-                log_file = log_dir / f"global_error_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+                current_time = datetime.datetime.now()
+                formatted_time = current_time.strftime('%H点%M分%S秒')
+                log_file = log_dir / f"global_error_{current_time.strftime('%Y%m%d')}_{formatted_time}.log"
                 with open(log_file, 'w', encoding='utf-8') as f:
                     f.write(error_msg)
             except Exception as e:
@@ -300,7 +302,9 @@ class Application:
 
     def _get_csv_filepath(self, record_data, worker=None):
         """获取CSV文件路径的辅助函数"""
-        date_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S')).split('_')[0]
+        timestamp_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+        date_str = timestamp_str.split('_')[0]
+        time_str = timestamp_str.split('_')[1] if '_' in timestamp_str else '000000'
 
         if getattr(sys, 'frozen', False):
             base_dir = pathlib.Path(sys.executable).parent
@@ -324,7 +328,8 @@ class Application:
             question_count = 1
 
         formatted_date = datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
-        csv_filename = f"{formatted_date}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
+        formatted_time = f"{time_str[:2]}点{time_str[2:4]}分{time_str[4:6]}秒"
+        csv_filename = f"{formatted_date}_{formatted_time}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
         csv_filepath = date_dir / csv_filename
 
         return csv_filepath
@@ -354,8 +359,19 @@ class Application:
             if interrupt_reason:
                 status_text += f" ({interrupt_reason})"
 
+            # 格式化汇总时间戳
+            timestamp_raw = record_data.get('timestamp', '未提供_未提供')
+            if '_' in timestamp_raw:
+                time_part = timestamp_raw.split('_')[1]
+                if len(time_part) == 6:
+                    formatted_summary_time = f"{time_part[:2]}点{time_part[2:4]}分{time_part[4:6]}秒"
+                else:
+                    formatted_summary_time = time_part
+            else:
+                formatted_summary_time = timestamp_raw
+
             summary_fields = [
-                f"--- 批次阅卷汇总 ({record_data.get('timestamp', '未提供_未提供').split('_')[1]}) ---",
+                f"--- 批次阅卷汇总 ({formatted_summary_time}) ---",
                 f"状态: {status_text}",
                 f"计划/完成: {record_data.get('total_questions_attempted', '未提供')} / {record_data.get('questions_completed', '未提供')} 个",
                 f"总用时: {record_data.get('total_elapsed_time_seconds', 0):.2f} 秒",
@@ -413,7 +429,15 @@ class Application:
 
             # --- 3. 动态构建表头和行 ---
             is_dual = record_data.get('is_dual_evaluation', False)
-            timestamp_str = record_data.get('timestamp', '').split('_')[1] if '_' in record_data.get('timestamp', '') else record_data.get('timestamp', '')
+            timestamp_raw = record_data.get('timestamp', '')
+            if '_' in timestamp_raw:
+                time_part = timestamp_raw.split('_')[1]
+                if len(time_part) == 6:
+                    timestamp_str = f"{time_part[:2]}点{time_part[2:4]}分{time_part[4:6]}秒"
+                else:
+                    timestamp_str = time_part
+            else:
+                timestamp_str = timestamp_raw
             question_index_str = f"题目{record_data.get('question_index', 0)}"
             final_total_score_str = str(record_data.get('total_score', 0))
 
