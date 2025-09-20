@@ -24,7 +24,7 @@ class AutoThread(QThread):
     """自动阅卷线程，负责执行自动阅卷流程"""
 
     # 定义信号
-    update_signal = pyqtSignal(str)  # 更新建议文本
+    # update_signal = pyqtSignal(str)  # 更新建议文本
     log_signal = pyqtSignal(str, bool)  # 日志信息，带错误标志
     progress_signal = pyqtSignal(int, int)  # 进度信息，当前进度和总进度
     record_signal = pyqtSignal(dict)  # 记录信号，发送阅卷记录
@@ -93,15 +93,16 @@ class AutoThread(QThread):
             "scoring_rubric_placeholder": standard_answer_rubric,
             "student_answer_image_placeholder": "（图片内容会通过API的其他方式传入，这里仅为逻辑占位）",
             "output_format_specification": {
-              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外：",
+              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外。确保输出的是有效的JSON，不要添加任何前缀、后缀、代码块标记或自然语言描述。直接输出JSON对象。",
               "format": {
                 "student_answer_summary": "【请在此处对图片中的学生手写答案进行**中立、客观、不带任何主观判断**的【核心内容概括】（例如：“学生答案的主要内容为[...]，表述清晰。”或“学生填写了[...]，部分内容无法识别。”）",
                 "scoring_basis": "【请针对【评分细则】中的【每一个填空项/答案要点】，清晰地解释你是如何判断该填空项/答案要点的是否得分以及得了多少分的。你需要：\n1. 引用或概括学生在对应填空项/答案要点上的作答内容（如果未作答请说明）。\n2. 结合评分细则，说明你的评分判断和理由（例如：是否与标准答案一致，是否满足特定格式要求等）。\n3. 明确指出该填空项/答案要点你最终给了多少分。\n请确保你的解释能够清晰地支撑你在 \`itemized_scores\` 字段中给出的对应分数。\n",
                 "itemized_scores": "【一个数字列表，例如 `[2, 0, 1]`。列表中的每个数字代表学生在【评分细则】中【对应顺序的每一个填空项/答案要点】上获得的【实际得分】。列表的长度应与评分细则中填空项/答案要点的数量一致。】",
-                "recognition_confidence": {
-                  "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
-                  "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
-                }
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # "recognition_confidence": {
+                #   "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
+                #   "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
+                # }
               }
             }
           }
@@ -117,15 +118,16 @@ class AutoThread(QThread):
             "scoring_rubric_placeholder": standard_answer_rubric,
             "student_answer_image_placeholder": "（图片内容会通过API的其他方式传入，这里仅为逻辑占位）",
             "output_format_specification": {
-              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外：",
+              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外。确保输出的是有效的JSON，不要添加任何前缀、后缀、代码块标记或自然语言描述。直接输出JSON对象。",
               "format": {
                 "student_answer_summary": "【请在此处对图片中的学生手写答案进行**中立、客观、不带任何主观判断**的【核心内容概括】（例如：“学生答案的主要内容为[...]，表述清晰。”或“学生填写了[...]，部分内容无法识别。”）",
                 "scoring_basis": "【请针对【评分细则】中的【每一个得分点】，清晰地解释你是如何判断该得分点的是否得分以及得了多少分的。你需要：\n1. 引用或概括学生在对应得分点上的作答内容（如果未作答请说明）。\n2. 结合评分细则，说明你的评分判断和理由。\n3. 明确指出该得分点你最终给了多少分。\n请确保你的解释能够清晰地支撑你在 `itemized_scores` 字段中给出的对应分数。\n",
                 "itemized_scores": "【一个数字列表，例如 `[3, 1, 0, 2]`。列表中的每个数字代表学生在【评分细则】中【对应顺序的每一个得分点】上获得的【实际得分】。列表的长度应与评分细则中得分点的数量一致。】",
-                "recognition_confidence": {
-                  "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
-                  "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
-                }
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # "recognition_confidence": {
+                #   "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
+                #   "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
+                # }
               }
             }
           }
@@ -141,15 +143,16 @@ class AutoThread(QThread):
             "scoring_rubric_placeholder": standard_answer_rubric,
             "student_answer_image_placeholder": "（图片内容会通过API的其他方式传入，这里仅为逻辑占位）",
             "output_format_specification": {
-              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外：",
+              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外。确保输出的是有效的JSON，不要添加任何前缀、后缀、代码块标记或自然语言描述。直接输出JSON对象。",
               "format": {
                 "student_answer_summary": "【请在此处对图片中的学生手写答案进行**中立、客观、不带任何主观判断**的【核心内容概括】（例如：“学生答案的主要内容为[...]，表述清晰。”或“学生填写了[...]，部分内容无法识别。”）",
                 "scoring_basis": "【请针对【评分细则】中的【每一个关键步骤/采分点】，清晰地解释你是如何判断该步骤/采分点的是否得分以及得了多少分的。你需要：\n1. 引用或概括学生在对应步骤/采分点上的解题过程或书写内容（如果未作答或跳过请说明）。\n2. 结合评分细则，说明你的评分判断和理由（例如：公式是否正确，代入是否无误，计算结果是否准确，证明逻辑是否严密等）。\n3. 明确指出该步骤/采分点你最终给了多少分。\n请确保你的解释能够清晰地支撑你在 `itemized_scores` 字段中给出的对应分数。\n",
                 "itemized_scores": "【一个数字列表，例如 `[2, 2, 0, 1]`。列表中的每个数字代表学生在【评分细则】中【对应顺序的每一个关键步骤/采分点】上获得的【实际得分】。列表的长度应与评分细则中关键步骤/采分点的数量一致。】",
-                "recognition_confidence": {
-                  "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
-                  "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
-                }
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # "recognition_confidence": {
+                #   "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
+                #   "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
+                # }
               }
             }
           }
@@ -165,15 +168,16 @@ class AutoThread(QThread):
             "scoring_rubric_placeholder": standard_answer_rubric,
             "student_answer_image_placeholder": "（图片内容会通过API的其他方式传入，这里仅为逻辑占位）",
             "output_format_specification": {
-              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外：",
+              "description": "请严格按照以下JSON格式返回结果，不要包含任何额外的解释性文字在JSON结构之外。确保输出的是有效的JSON，不要添加任何前缀、后缀、代码块标记或自然语言描述。直接输出JSON对象。",
               "format": {
                 "student_answer_summary": "【请在此处对图片中的学生手写答案进行**中立、客观、不带任何主观判断**的【核心内容概括】（例如：“学生答案的主要内容为[...]，表述清晰。”或“学生填写了[...]，部分内容无法识别。”）",
                 "scoring_basis": "【请在此处综合阐述你给出 `itemized_scores` 中最终总分的详细理由。你需要：\n1. 参照【评分细则】中列出的各项整体评估维度（例如：内容切题性、思想深度、结构逻辑、语言表达、书写规范等）。\n2. 针对每一个主要评估维度，清晰描述从图片中观察到的学生表现。\n3. 解释这些不同维度的表现是如何共同作用，最终形成了你在 `itemized_scores` 中给出的那个总分。\n请确保你的阐述逻辑清晰、依据充分，并直接关联到最终的评分结果。\n（例如：\n- 维度1（如内容切题性）：学生表现[...具体描述...]，符合/不符合细则的[...某标准...]。\n- 维度2（如结构逻辑）：学生表现[...具体描述...]，符合/不符合细则的[...某标准...]。\n- (依此类推所有主要维度)\n- 综合评价：基于以上各维度表现，[简述如何综合考虑，例如哪些是主要影响因素]，并对照评分细则中的等级描述，最终评定总分为XX分。）",
                 "itemized_scores": "【一个【只包含一个数字的列表】，例如 `[45]` 或 `[8]`。这个数字代表你根据【评分细则】中的整体评估标准/评分维度给出的【最终总分】。】",
-                "recognition_confidence": {
-                  "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
-                  "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
-                }
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # "recognition_confidence": {
+                #   "score": "[请从1-5中给出一个整数，代表你对本次图片中手写文字识别的自信程度。1=非常不确定，大量关键文字无法识别；3=基本可读，但部分文字模糊；5=非常自信，所有文字清晰可辨。]",
+                #   "reason": "[请用一句话简述你给出该分数的原因，例如：'字迹清晰，无涂改。'或'部分关键名词书写较为潦草，识别存在不确定性。']"
+                # }
               }
             }
           }
@@ -326,11 +330,22 @@ class AutoThread(QThread):
                     # --- 结束构建Prompt ---
 
                     # 调用API进行评分
-                    score, reasoning_data, itemized_scores_data, confidence_data = self.evaluate_answer(
+                    eval_result = self.evaluate_answer(
                         img_str, text_prompt_for_api, q_config, dual_evaluation, score_diff_threshold
                     )
 
-                    if score is None: # evaluate_answer 内部如果出错会调用 _set_error_state 并返回 None
+                    # 检查是否完全失败（线程已停止）
+                    if eval_result is None:
+                        if not self.running: break
+                        continue
+
+                    score, reasoning_data, itemized_scores_data, confidence_data = eval_result
+
+                    # 如果评分处理失败，仍然记录错误信息，但不输入分数
+                    if score is None:
+                        self.log_signal.emit(f"第 {question_index} 题评分失败，将记录错误信息但跳过分数输入", True)
+                        # 记录失败的阅卷结果
+                        self.record_grading_result(question_index, 0, img_str, reasoning_data, itemized_scores_data, confidence_data)
                         if not self.running: break
                         continue
 
@@ -577,10 +592,12 @@ class AutoThread(QThread):
             'api2_scores': itemized_scores2 if itemized_scores2 is not None else []
         }
         
-        combined_confidence = {
-            'api1_confidence': confidence1,
-            'api2_confidence': confidence2
-        }
+        # 此版本暂时不启用置信度功能，今后如果需要再启用
+        # combined_confidence = {
+        #     'api1_confidence': confidence1,
+        #     'api2_confidence': confidence2
+        # }
+        combined_confidence = {} # 置信度功能暂时停用
 
         return avg_score, dual_eval_details, itemized_scores_data_for_dual, combined_confidence, None
 
@@ -599,7 +616,7 @@ class AutoThread(QThread):
                     成功时为 (student_answer_summary, scoring_basis)
                     失败时为错误信息字符串
                 itemized_scores (list or None): 从API响应中提取的分项得分列表
-                confidence_data (dict or None): 识别置信度数据
+                confidence_data (dict or None): 识别可信度数据
         """
         response_text, error_from_api_call = response
 
@@ -610,25 +627,45 @@ class AutoThread(QThread):
             return None, error_msg, None, None
 
         try:
-            try:
-                parsed_for_ui = json.loads(response_text)
-                formatted_response_for_ui = json.dumps(parsed_for_ui, ensure_ascii=False, indent=2)
-                self.update_signal.emit(f"原始JSON响应:\n{formatted_response_for_ui}")
-            except json.JSONDecodeError:
-                self.update_signal.emit(f"原始响应 (非JSON或解析失败):\n{response_text}")
+            # try:
+            #     parsed_for_ui = json.loads(response_text)
+            #     formatted_response_for_ui = json.dumps(parsed_for_ui, ensure_ascii=False, indent=2)
+            #     self.update_signal.emit(f"原始JSON响应:\n{formatted_response_for_ui}")
+            # except json.JSONDecodeError:
+            #     self.update_signal.emit(f"原始响应 (非JSON或解析失败):\n{response_text}")
 
             self.log_signal.emit("尝试解析API响应JSON...", False)
-            data = json.loads(response_text)
+
+            # 首先尝试直接解析
+            data = None
+            try:
+                data = json.loads(response_text)
+            except json.JSONDecodeError:
+                # 如果直接解析失败，尝试提取JSON部分
+                self.log_signal.emit("直接解析失败，尝试提取JSON部分...", False)
+                extracted_json = self._extract_json_from_text(response_text)
+                if extracted_json:
+                    try:
+                        data = json.loads(extracted_json)
+                        self.log_signal.emit("成功从响应中提取并解析JSON", False)
+                    except json.JSONDecodeError:
+                        pass  # 仍然失败，继续到外层的异常处理
+
+            if data is None:
+                raise json.JSONDecodeError("无法解析响应为JSON", response_text, 0)
 
             student_answer_summary = data.get("student_answer_summary", "未能提取学生答案摘要")
             scoring_basis = data.get("scoring_basis", "未能提取评分依据")
             itemized_scores_from_json = data.get("itemized_scores")
-            confidence_data = data.get("recognition_confidence", {}) # 提取置信度，默认为空字典
+            # 此版本暂时不启用置信度功能，今后如果需要再启用
+            # confidence_data = data.get("recognition_confidence", {}) # 提取可信度，默认为空字典
+            confidence_data = {} # 置信度功能暂时停用
 
             self.log_signal.emit(f"从JSON提取的学生答案摘要: {student_answer_summary}", False)
             self.log_signal.emit(f"从JSON提取的评分依据:\n{scoring_basis}", False)
             self.log_signal.emit(f"从JSON提取的分项得分列表: {itemized_scores_from_json}", False)
-            self.log_signal.emit(f"从JSON提取的置信度数据: {confidence_data}", False)
+            # 此版本暂时不启用置信度功能，今后如果需要再启用
+            # self.log_signal.emit(f"从JSON提取的可信度数据: {confidence_data}", False)
 
             calculated_total_score = 0.0
             numeric_scores_list_for_return = []
@@ -665,13 +702,22 @@ class AutoThread(QThread):
             return final_score, reasoning_tuple, numeric_scores_list_for_return, confidence_data
 
         except json.JSONDecodeError as e_json:
-            error_msg = f"API响应不是有效的JSON格式: {str(e_json)}. 响应文本前200字符: '{response_text[:200]}...'"
-            self.log_signal.emit(error_msg, True)
+            error_msg = ("【API响应格式错误】模型返回的内容不是标准的JSON，无法解析。\n"
+                         "可能原因：\n"
+                         "1. 模型可能正忙或出现内部错误，导致输出了非结构化文本。\n"
+                         "2. 您使用的模型可能不完全兼容当前Prompt的JSON输出要求。\n"
+                         "解决方案：请尝试重新运行。如果问题反复出现，建议更换模型或检查供应商服务状态。")
+            self.log_signal.emit(f"{error_msg}\n原始响应(前200字符): '{response_text[:200]}...'", True)
             self._set_error_state(error_msg)
-            return None, error_msg, None, None
-        except KeyError as e_key:
-            error_msg = f"API响应JSON中缺少必要的键: {str(e_key)}"
-            self.log_signal.emit(error_msg, True)
+            # 返回错误信息和原始响应，以便记录到日志中
+            return None, (error_msg, response_text), None, None
+        except (KeyError, IndexError) as e_key:
+            error_msg = (f"【API响应结构错误】模型返回的JSON中缺少关键信息 (如: {str(e_key)})。\n"
+                         f"可能原因：\n"
+                         f"1. 模型未能完全遵循格式化输出的指令。\n"
+                         f"2. API供应商可能更新了其响应结构。\n"
+                         f"解决方案：这是程序需要处理的兼容性问题。请将此错误反馈给开发者。")
+            self.log_signal.emit(f"{error_msg}\n完整响应: {response_text}", True)
             self._set_error_state(error_msg)
             return None, error_msg, None, None
         except Exception as e_process:
@@ -714,6 +760,23 @@ class AutoThread(QThread):
             error_msg = f"校验和处理分数时发生严重错误: {str(e)}\n{error_detail}"
             self.log_signal.emit(error_msg, True)
             self._set_error_state(error_msg)
+            return None
+
+    def _extract_json_from_text(self, text):
+        """
+        从文本中提取JSON字符串。
+        尝试找到第一个完整的JSON对象（以{开始，以}结束）。
+        """
+        import re
+        try:
+            # 使用正则表达式找到JSON对象
+            # 匹配最外层的{}，允许嵌套
+            json_pattern = r'\{(?:[^{}]|{(?:[^{}]|{[^{}]*})*})*\}'
+            match = re.search(json_pattern, text)
+            if match:
+                return match.group(0)
+            return None
+        except Exception:
             return None
 
     def extract_reasoning(self, text):
@@ -864,46 +927,64 @@ class AutoThread(QThread):
             if is_dual:
                 # 双评模式
                 record.update({
-                    'api1_student_answer_summary': reasoning_data.get('api1_summary', 'N/A'),
-                    'api1_scoring_basis': reasoning_data.get('api1_basis', 'N/A'),
+                    'api1_student_answer_summary': reasoning_data.get('api1_summary', 'AI未提供'),
+                    'api1_scoring_basis': reasoning_data.get('api1_basis', 'AI未提供'),
                     'api1_raw_score': reasoning_data.get('api1_raw_score', 0.0),
-                    'api2_student_answer_summary': reasoning_data.get('api2_summary', 'N/A'),
-                    'api2_scoring_basis': reasoning_data.get('api2_basis', 'N/A'),
+                    'api2_student_answer_summary': reasoning_data.get('api2_summary', 'AI未提供'),
+                    'api2_scoring_basis': reasoning_data.get('api2_basis', 'AI未提供'),
                     'api2_raw_score': reasoning_data.get('api2_raw_score', 0.0),
                     'score_difference': reasoning_data.get('score_difference', 0.0),
-                    'score_diff_threshold': self.parameters.get('score_diff_threshold', "N/A"),
+                    'score_diff_threshold': self.parameters.get('score_diff_threshold', "AI未提供"),
                 })
                 if isinstance(itemized_scores_data, dict):
                     record['api1_itemized_scores'] = itemized_scores_data.get('api1_scores', [])
                     record['api2_itemized_scores'] = itemized_scores_data.get('api2_scores', [])
-                if isinstance(confidence_data, dict):
-                    api1_conf = confidence_data.get('api1_confidence', {})
-                    record['api1_confidence_score'] = api1_conf.get('score')
-                    record['api1_confidence_reason'] = api1_conf.get('reason', 'N/A')
-                    
-                    api2_conf = confidence_data.get('api2_confidence', {})
-                    record['api2_confidence_score'] = api2_conf.get('score')
-                    record['api2_confidence_reason'] = api2_conf.get('reason', 'N/A')
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # if isinstance(confidence_data, dict):
+                #     api1_conf = confidence_data.get('api1_confidence', {})
+                #     if isinstance(api1_conf, dict):
+                #         record['api1_confidence_score'] = api1_conf.get('score')
+                #         record['api1_confidence_reason'] = api1_conf.get('reason', 'AI未提供')
+
+                #     api2_conf = confidence_data.get('api2_confidence', {})
+                #     if isinstance(api2_conf, dict):
+                #         record['api2_confidence_score'] = api2_conf.get('score')
+                #         record['api2_confidence_reason'] = api2_conf.get('reason', 'AI未提供')
 
             elif isinstance(reasoning_data, tuple) and len(reasoning_data) == 2:
-                # 单评成功模式
-                summary, basis = reasoning_data
-                record.update({
-                    'student_answer': summary,
-                    'reasoning_basis': basis,
-                    'sub_scores': str(itemized_scores_data),
-                })
-                if isinstance(confidence_data, dict):
-                    record['confidence_score'] = confidence_data.get('score')
-                    record['confidence_reason'] = confidence_data.get('reason', 'N/A')
-            
+                # 检查是否为错误模式 (error_msg, raw_response)
+                first_elem, second_elem = reasoning_data
+                if isinstance(second_elem, str) and not second_elem.startswith('{') and not second_elem.startswith('['):
+                    # 这是错误模式，second_elem是原始响应
+                    error_info = first_elem
+                    raw_response = second_elem
+                    record.update({
+                        'student_answer': "评分失败",
+                        'reasoning_basis': error_info,
+                        'raw_ai_response': raw_response,
+                        'sub_scores': "AI未提供",
+                    })
+                    self.log_signal.emit(f"记录结果时检测到解析错误，已保存原始AI响应", True)
+                else:
+                    # 单评成功模式
+                    summary, basis = reasoning_data
+                    record.update({
+                        'student_answer': summary,
+                        'reasoning_basis': basis,
+                        'sub_scores': str(itemized_scores_data),
+                    })
+                    # 此版本暂时不启用置信度功能，今后如果需要再启用
+                    # if isinstance(confidence_data, dict):
+                    #     record['confidence_score'] = confidence_data.get('score')
+                    #     record['confidence_reason'] = confidence_data.get('reason', 'AI未提供')
+
             else:
                 # 错误或未知模式
                 error_info = str(reasoning_data) if reasoning_data else "未知错误"
                 record.update({
                     'student_answer': "评分失败",
                     'reasoning_basis': error_info,
-                    'sub_scores': "N/A",
+                    'sub_scores': "AI未提供",
                 })
                 self.log_signal.emit(f"记录结果时遇到未预期的reasoning_data格式或错误: {error_info}", True)
 

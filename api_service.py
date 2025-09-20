@@ -1,489 +1,670 @@
-import os
-import requests
-import base64
-import json
-import time
-import traceback
-import configparser
-from datetime import datetime
-from contextlib import contextmanager
-from typing import Dict, Any, Tuple, Optional
+# --- START OF FILE api_service.py ---
+#
+# ==============================================================================
+#  API 集成更新摘要 (API Integration Update Summary)
+# ==============================================================================
+#
+#  版本: v2.2.1
+#  更新日期: 2025-09-14
+#  更新人员: AI Assistant
+#
+#  重大变更:
+#  1. API Key格式处理增强 - 解决用户输入格式不一致的问题
+#     * 新增 `_preprocess_api_key` 方法，统一处理不同格式的API Key
+#     * 腾讯API Key: 支持中文冒号自动转换，增强格式验证
+#     * Bearer Token: 智能移除重复的"Bearer "前缀
+#     * 提供详细的错误提示和格式指导
+#  2. 统一兼容Payload构建器 - 修正并统一了所有OpenAI兼容模型的请求构建逻辑。
+#     * `_build_openai_compatible_payload` 现遵循"图片在前，文本在后"的最大兼容原则。
+#     * 阿里云、百度、Moonshot、智谱等统一使用此构建器，大幅减少代码冗余。
+#     * 删除了重复的 `_build_aliyun_payload` 和 `_build_baidu_payload` 函数。
+#  3. 百度文心千帆V2 API升级 - 从旧版API迁移到全新V2版本
+#     * Endpoint: https://qianfan.baidubce.com/v2/chat/completions
+#     * 鉴权方式: Bearer token (bce-v3/ALTAK-...格式)
+#     * 请求格式: 与OpenAI接口高度兼容
+#     * 响应解析: 标准 choices[0].message.content 格式
+#  4. 腾讯混元 API 集成更新 - 统一使用 ChatCompletions 接口
+#     * 从 ImageQuestion 迁移到 ChatCompletions action (无频率限制)
+#     * 实现腾讯云 TC3-HMAC-SHA256 签名方法 v3
+#     * 智能模型适配 - 支持所有腾讯视觉模型的自动检测和适配
+#     * 最大兼容性 - 用户输入的任何腾讯视觉模型都能正确调用
+#
+#  支持的视觉模型:
+#  百度文心千帆:
+#  - # deepseek-vl2 (推荐) - 2025/9/14，deepseek官方未提供视觉模型，暂时不使用
+#  - ernie-4.5-vl-28b-a3b (深度思考)
+#  - qwen2.5-vl 系列
+#  - llama-4-maverick-17b-128e-instruct (多图输入)
+#  - internvl2_5-38b-mpo
+#
+#  腾讯混元:
+#  - hunyuan-vision (基础多模态模型)
+#  - hunyuan-turbos-vision (旗舰视觉模型)
+#  - hunyuan-turbos-vision-20250619 (最新旗舰版本)
+#  - hunyuan-t1-vision (深度思考视觉模型)
+#  - hunyuan-t1-vision-20250619 (最新深度思考版本)
+#  - hunyuan-large-vision (多语言视觉模型)
+#
+#  技术特性:
+#  - API Key 格式: Bearer bce-v3/ALTAK-... (百度) / SecretId:SecretKey (腾讯)
+#  - 鉴权方式: Bearer token / 腾讯云签名方法 v3
+#  - 接口类型: ChatCompletions (兼容OpenAI格式)
+#  - 图像格式: JPEG base64编码
+#  - 响应解析: 标准 choices[0].message.content 格式
+#
+#  未来维护指南:
+#  1. 新模型适配: 监控各厂商官方文档更新
+#  2. API变更: 及时跟进接口格式变化
+#  3. 错误处理: 关注签名过期和服务错误码
+#  4. 性能优化: 注意请求频率和超时设置
+#  5. 兼容性: 保持与OpenAI接口的兼容性
+#
+# ==============================================================================
 
-TINY_BASE64_JPEG = "9j/4AAQSkZJRgABAQEAYABgAAD/9QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAAAAD/2wBDAAIBAQIBAQICAgICAgICAwUDAwMDAwYEBAMFBwYHBwcGBwcICQsJCAgKCAcHCg0KCgsMDAwMBwkODw0MDgsMDAz/2wBDAQICAgMDAwYDAwYMCAcIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAz/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVVWVhZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVVWVhZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLi5+Tl5ufo6ery8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD8QQKKKKAP/2Q=="
+import requests
+import traceback
+from typing import Tuple, Optional, Dict, Any
+import hashlib
+import hmac
+import time
+import json
+from datetime import datetime
+
+# ==============================================================================
+#  UI文本到提供商ID的映射字典 (UI Text to Provider ID Mapping)
+#  这是连接UI显示文本和后台代码的桥梁。
+#  UI上的"火山引擎 (豆包)" 对应到代码里的 "volcengine"。
+#  现在基于 PROVIDER_CONFIGS 动态生成，避免数据冗余。
+# ==============================================================================
+def generate_ui_text_to_provider_id():
+    """基于 PROVIDER_CONFIGS 动态生成 UI_TEXT_TO_PROVIDER_ID 映射"""
+    return {config["name"]: provider_id for provider_id, config in PROVIDER_CONFIGS.items()}
+
+# ==============================================================================
+#  权威供应商配置字典 (Authoritative Provider Configuration)
+#  这是整个系统的"单一事实来源 (Single Source of Truth)"。
+#
+#  腾讯混元更新历史 (Tencent Hunyuan Update History):
+#  - 2025-09-13: 重大更新 - 统一使用 ChatCompletions 接口
+#    * 替换 ImageQuestion 为 ChatCompletions action (无频率限制)
+#    * 实现腾讯云签名方法 v3 完整认证
+#    * 支持所有视觉模型自动适配 (hunyuan-vision, hunyuan-turbos-vision 等)
+#    * 智能检测视觉模型并自动选择正确的 payload 格式
+#    * API Key 格式: SecretId:SecretKey
+# ==============================================================================
+PROVIDER_CONFIGS = {
+    # 这里的 key ('volcengine', 'moonshot'等) 是程序内部使用的【内部标识】
+    "volcengine": {
+        "name": "火山引擎 (推荐)",
+        "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_volcengine_payload",
+    },
+    "moonshot": {
+        "name": "月之暗面",
+        "url": "https://api.moonshot.cn/v1/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    "zhipu": {
+        "name": "智谱清言",
+        "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "auth_method": "bearer", # 智谱的Key虽然是JWT，但用法和Bearer完全一样
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    # "deepseek": {
+    #     "name": "deepseek",
+    #     "url": "https://api.deepseek.com/chat/completions",
+    #     "auth_method": "bearer",
+    #     "payload_builder": "_build_openai_compatible_payload",
+    # },
+    "aliyun": {
+        "name": "阿里通义千问",
+        "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    "baidu": {
+        "name": "百度文心千帆",
+        "url": "https://qianfan.baidubce.com/v2/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    "tencent": {
+        "name": "腾讯混元",
+        "url": "https://hunyuan.tencentcloudapi.com/",
+        "auth_method": "tencent_signature_v3", # 使用腾讯云签名方法 v3
+        "payload_builder": "_build_tencent_payload",
+        "service_info": {  # 新增服务信息配置，避免硬编码
+            "service": "hunyuan",
+            "region": "ap-guangzhou",
+            "version": "2023-09-01",
+            "host": "hunyuan.tencentcloudapi.com",
+            "action": "ChatCompletions"
+        }
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    "openai": { # 新增
+        "name": "OpenAI",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "auth_method": "bearer",
+        "payload_builder": "_build_openai_compatible_payload",
+    },
+    "gemini": { # 新增
+        "name": "Google Gemini",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
+        "auth_method": "google_api_key_in_url",
+        "payload_builder": "_build_gemini_payload",
+    }
+}
+
+# ==============================================================================
+#  生成UI文本到提供商ID的映射常量
+# ==============================================================================
+UI_TEXT_TO_PROVIDER_ID = generate_ui_text_to_provider_id()
+
+# ==============================================================================
+#  辅助函数，用于UI和内部ID之间的转换
+# ==============================================================================
+def get_provider_id_from_ui_text(ui_text: str) -> Optional[str]:
+    mapping = generate_ui_text_to_provider_id()
+    return mapping.get(ui_text.strip())
+
+def get_ui_text_from_provider_id(provider_id: str) -> Optional[str]:
+    config = PROVIDER_CONFIGS.get(provider_id)
+    return config["name"] if config else None
 
 class ApiService:
-    """
-API服务类，负责调用各种AI API.
-稳定支持 (大部分通过OpenAI兼容接口):
-- OpenAI, Azure OpenAI, Moonshot, DeepSeek, 01.AI
-- Aliyun (通义千问，通过OpenAI兼容模式)
-- Volcengine (火山引擎方舟平台，OpenAI兼容，默认关闭深度思考)
-- Zhipu (智谱GLM，OpenAI兼容)
-- Baidu (百度AI Studio星河大模型 或 千帆ModelBuilder，均通过OpenAI兼容接口，用户需提供对应平台的API Key/Access Token)
-- Tencent (腾讯混元，通过OpenAI兼容接口)
-# ... (如果还有其他实验性API，保留其说明)
-"""
-    
     def __init__(self, config_manager):
-        # 初始化所有API属性为空字符串 - 统一使用UI文件中的命名
         self.config_manager = config_manager
-        self.session = requests.Session()  # 创建一个Session对象以复用连接
-        self.current_question_index = None  # 当前题目索引
-        self.first_api_successful_strategy = None # 缓存首次API调用成功的策略
-        self.second_api_successful_strategy = None
-        self.running = True  # 添加这一行
+        self.session = requests.Session()
+        # 初始化当前题目索引，虽然主要逻辑在AutoThread中，但这里有个默认值更安全
+        self.current_question_index = 1
 
-        self.specific_api_configs = {
-            # 特定API的配置信息，用于驱动通用调用逻辑
-            "openai": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False
-            },
-            "azure": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "api_key",
-                "auth_header": "api-key",
-                "url_needs_token": False
-            },
-            "baidu": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False,
-                "status": "stable_openai_compatible"
-            },
-            "zhipu": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False,
-                "status": "stable"
-            },
-            "aliyun": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False,
-                "status": "stable_openai_compatible"
-            },
-            "volcengine": {
-                "payload_template_type": "volcengine_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                # Base64编码的图片必须是带有前缀的Data URI格式, e.g., "data:image/jpeg;base64,<Base64编码>"
-                "url_needs_token": False,
-                "status": "stable"
-            },
-            "tencent": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False,
-                "status": "stable_openai_compatible"
-            },
-            "moonshot": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False
-            },
-            "deepseek": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False
-            },
-            "01ai": {
-                "payload_template_type": "openai_vision_v1",
-                "auth_method": "bearer",
-                "auth_header": "Authorization",
-                "url_needs_token": False
-            }
-        }
-    
-    def update_config_from_manager(self):
-        self.first_api_successful_strategy = None
-        self.second_api_successful_strategy = None
-        print("[API] ApiService 配置已更新，缓存的API调用策略已重置。")
+    # ==========================================================================
+    #  腾讯云签名方法 v3 实现 (Tencent Cloud Signature Method v3)
+    #
+    #  更新历史 (Update History):
+    #  - 2025-09-13: 首次实现完整的 TC3-HMAC-SHA256 签名流程
+    #    * 实现规范请求字符串构建
+    #    * 实现 HMAC-SHA256 多层签名计算
+    #    * 支持动态时间戳和凭证范围
+    #    * 自动生成 Authorization header
+    #
+    #  技术要点 (Technical Notes):
+    #  - 使用 UTC 时间戳确保时区一致性
+    #  - 签名顺序: SecretKey -> Date -> Service -> "tc3_request"
+    #  - 支持的 Service: "hunyuan"
+    #  - 支持的 Region: "ap-guangzhou" (默认)
+    # ==========================================================================
+    def _build_tencent_signature_v3(self, secret_id: str, secret_key: str, service: str, region: str,
+                                   action: str, version: str, payload: str, host: str) -> str:
+        """构建腾讯云 API 签名方法 v3
 
-    def set_current_question(self, question_index):
-        self.current_question_index = question_index
-        print(f"[API] 当前处理题目索引: {question_index}")
-    
-    def _detect_api_type(self, url: str) -> str:
-        domain = url.lower()
-        api_patterns = {
-            "openai": ["openai.com", "api.openai", "openai.azure.com"],
-            "azure": ["azure.com", "api.cognitive.microsoft", "openai.azure.com"],
-            "baidu": ["baidu.com", "ernie", "wenxin", "aip.baidubce.com", "yiyan", "文心", "千帆"],
-            "zhipu": ["zhipu", "chatglm", "bigmodel.cn", "智谱", "glm"],
-            "aliyun": ["aliyun", "dashscope", "tongyi", "ecs.aliyuncs.com", "通义", "千问", "qwen"],
-            "volcengine": ["volce", "volcengine", "ark.cn-beijing", "bytedance", "火山", "字节", "豆包"],
-            "tencent": ["tencent", "hunyuan", "腾讯", "cloud.tencent.com", "混元"],
-            "moonshot": ["moonshot", "月之暗面", "kimi"],
-            "deepseek": ["deepseek", "深度求索"],
-            "01ai": ["01.ai", "零一万物", "yi-"]
-        }
-        for provider, patterns in api_patterns.items():
-            for pattern in patterns:
-                if pattern in domain:
-                    return provider
-        if any(endpoint in url for endpoint in ["/v1/chat/completions", "/api/v1/chat/completions"]):
-            return "openai_like"
-        return "standard"
+        Args:
+            secret_id: 腾讯云 SecretId
+            secret_key: 腾讯云 SecretKey
+            service: 服务名称 (hunyuan)
+            region: 地域 (ap-guangzhou)
+            action: API 动作 (ChatCompletions)
+            version: API 版本 (2023-09-01)
+            payload: 请求 payload 的 JSON 字符串
 
-    def call_first_api(self, img_str, prompt):
+        Returns:
+            tuple: (authorization_header, timestamp)
+        """
+
+        # 1. 创建规范请求字符串
+        algorithm = "TC3-HMAC-SHA256"
+        timestamp = int(time.time())
+        date = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d')
+
+        # 规范请求
+        canonical_request = self._build_canonical_request(action, payload, host)
+
+        # 2. 创建待签字符串
+        credential_scope = f"{date}/{service}/tc3_request"
+        string_to_sign = f"{algorithm}\n{timestamp}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
+
+        # 3. 计算签名
+        secret_date = hmac.new(f"TC3{secret_key}".encode('utf-8'), date.encode('utf-8'), hashlib.sha256).digest()
+        secret_service = hmac.new(secret_date, service.encode('utf-8'), hashlib.sha256).digest()
+        secret_signing = hmac.new(secret_service, "tc3_request".encode('utf-8'), hashlib.sha256).digest()
+        signature = hmac.new(secret_signing, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+
+        # 4. 构建 Authorization
+        authorization = f"{algorithm} Credential={secret_id}/{credential_scope}, SignedHeaders=content-type;host, Signature={signature}"
+
+        return authorization, str(timestamp)
+
+    def _build_canonical_request(self, action: str, payload: str, host: str) -> str:
+        """构建规范请求字符串"""
+        # HTTP 请求方法
+        http_request_method = "POST"
+        # 规范 URI
+        canonical_uri = "/"
+        # 规范查询字符串
+        canonical_querystring = ""
+        # 规范头部
+        canonical_headers = f"content-type:application/json\nhost:{host}\n"
+        # 签名的头部列表
+        signed_headers = "content-type;host"
+        # 请求载荷的哈希值
+        hashed_request_payload = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+        canonical_request = f"{http_request_method}\n{canonical_uri}\n{canonical_querystring}\n{canonical_headers}\n{signed_headers}\n{hashed_request_payload}"
+
+        return canonical_request
+
+    # 新增: 设置当前题目索引的方法
+    def set_current_question(self, index: int):
+        self.current_question_index = index
+
+    def call_first_api(self, img_str: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        return self._call_api_by_group("first", img_str, prompt)
+
+    def call_second_api(self, img_str: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        return self._call_api_by_group("second", img_str, prompt)
+
+    def _call_api_by_group(self, api_group: str, img_str: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        """根据API组别调用对应的预设供应商API"""
         try:
-            if not all([self.config_manager.first_api_key, self.config_manager.first_modelID, self.config_manager.first_api_url]):
-                return None, "API配置不完整 (来自ConfigManager)"
-            if self.first_api_successful_strategy:
-                print("[API] 使用缓存的First API成功策略进行调用...")
-                return self._execute_cached_strategy(self.first_api_successful_strategy, self.config_manager.first_api_key, self.config_manager.first_modelID, img_str, prompt)
+            if api_group == "first":
+                provider = self.config_manager.first_api_provider
+                api_key = self.config_manager.first_api_key
+                model_id = self.config_manager.first_modelID
+            elif api_group == "second":
+                provider = self.config_manager.second_api_provider
+                api_key = self.config_manager.second_api_key
+                model_id = self.config_manager.second_modelID
             else:
-                print("[API] 未找到缓存策略，执行首次First API调用和策略发现...")
-                api_type = self._detect_api_type(self.config_manager.first_api_url)
-                print(f"[API] 检测到API类型: {api_type}")
-                result, error = self._call_api_with_adaptive_strategy(self.config_manager.first_api_url, self.config_manager.first_api_key, self.config_manager.first_modelID, img_str, prompt, api_type, api_group="first")
-                if error:
-                    error = self._get_user_friendly_error_message(error, api_type)
-                return result, error
+                return None, "无效的API组别"
+
+            if not all([provider, api_key, model_id]):
+                return None, f"第{api_group}组API配置不完整 (供应商、Key或模型ID为空)"
+            
+            print(f"[API] 准备调用 {api_group} API, 供应商: {provider}")
+            return self._execute_api_call(provider, api_key, model_id, img_str, prompt)
         except Exception as e:
             error_detail = traceback.format_exc()
-            print(f"[API] 调用出错: {str(e)}\n{error_detail}")
+            print(f"[API] 调用 {api_group} API 时发生严重错误: {str(e)}\n{error_detail}")
             return None, f"API调用失败: {str(e)}"
-    
-    def call_second_api(self, img_str, prompt):
+
+    def test_api_connection(self, api_group: str) -> Tuple[bool, str]:
+        """测试指定API组的连接"""
         try:
-            if not all([self.config_manager.second_api_key, self.config_manager.second_modelID, self.config_manager.second_api_url]):
-                return None, "API配置不完整"
-            if self.second_api_successful_strategy:
-                print("[API] 使用缓存的Second API成功策略进行调用...")
-                return self._execute_cached_strategy(self.second_api_successful_strategy, self.config_manager.second_api_key, self.config_manager.second_modelID, img_str, prompt)
+            if api_group == "first":
+                provider, api_key, model_id, group_name = (
+                    self.config_manager.first_api_provider, self.config_manager.first_api_key,
+                    self.config_manager.first_modelID, "第一组"
+                )
+            elif api_group == "second":
+                provider, api_key, model_id, group_name = (
+                    self.config_manager.second_api_provider, self.config_manager.second_api_key,
+                    self.config_manager.second_modelID, "第二组"
+                )
             else:
-                print("[API] 未找到缓存策略，执行首次Second API调用和策略发现...")
-                api_type = self._detect_api_type(self.config_manager.second_api_url)
-                print(f"[API] 检测到API类型: {api_type}")
-                result, error = self._call_api_with_adaptive_strategy(self.config_manager.second_api_url, self.config_manager.second_api_key, self.config_manager.second_modelID, img_str, prompt, api_type, api_group="second")
-                if error:
-                    error = self._get_user_friendly_error_message(error, api_type)
-                return result, error
-        except Exception as e:
-            error_detail = traceback.format_exc()
-            print(f"[API] 调用出错: {str(e)}\n{error_detail}")
-            return None, f"API调用失败: {str(e)}"
-    
-    def _standardize_api_endpoint(self, url: str, api_type: str) -> list:
-        cleaned_url = url.strip().rstrip('/')
-        generic_suffix = "/chat/completions"
-        standard_openai_suffix = "/v1/chat/completions"
-        candidates = [cleaned_url]
-        if not cleaned_url.endswith(generic_suffix):
-            if api_type in ["baidu", "aliyun", "volcengine"]:
-                 candidates.append(f"{cleaned_url}{generic_suffix}")
-            else:
-                candidates.append(f"{cleaned_url}{standard_openai_suffix}")
-        final_candidates = []
-        for c in candidates:
-            if c not in final_candidates:
-                final_candidates.append(c)
-        return final_candidates
-
-    def _call_api_with_adaptive_strategy(self, api_url: str, api_key: str, model_id: str, img_str: str, prompt: str, api_type: str, api_group: str):
-        url_candidates = self._standardize_api_endpoint(api_url, api_type)
-        print(f"[API] (优化策略) API类型: {api_type}, URL候选列表: {url_candidates}")
-        api_config = self.specific_api_configs.get(api_type, {})
-        payload_template_type = api_config.get("payload_template_type", "openai_vision_v1")
-        print(f"[API] (优化策略) 使用的Payload模板: {payload_template_type}")
-
-        headers = {"Content-Type": "application/json"}
-        if api_config.get("extra_headers"):
-            headers.update(api_config.get("extra_headers"))
-        auth_method = api_config.get("auth_method", "bearer")
-        auth_header_name = api_config.get("auth_header", "Authorization")
-
-        if auth_method == "bearer":
-            headers[auth_header_name] = f"Bearer {api_key}"
-        elif auth_method == "api_key":
-            headers[auth_header_name] = api_key
-
-        for test_url in url_candidates:
-            if not self.running:
-                return None, "线程已停止"
-
-            # 步骤1: 默认使用 data_uri 格式尝试
-            image_format = "data_uri"
-            print(f"[API] (优化策略) 尝试URL: {test_url}, 默认图片格式: {image_format}")
+                return False, "无效的API组别"
             
-            temp_api_config = api_config.copy()
-            temp_api_config["image_url_format"] = image_format
-            payload = self._build_payload_from_template(payload_template_type, model_id, img_str, prompt, temp_api_config)
-            
-            if not payload:
-                print(f"[API] 警告: 为API类型 '{api_type}' 构建请求体失败 (图片格式: {image_format})")
-                continue
+            if not all([provider, api_key.strip(), model_id.strip()]):
+                return False, f"{group_name}API配置不完整"
 
-            try:
-                response = self._robust_api_call(test_url, headers, payload, max_retries=1)
-                if response is None:
-                    print(f"[API] 请求失败，无响应 (URL: {test_url})")
-                    break # URL不通，无需尝试其他格式，直接换下一个URL
+            print(f"[API Test] 测试 {group_name} API, 供应商: {provider}")
+            result, error = self._execute_api_call(provider, api_key, model_id, img_str="", prompt="你好")
 
-                # 步骤2: 处理响应
-                if response.status_code == 200:
-                    # 调用成功，处理并返回结果
-                    result_data = response.json()
-                    content = self._extract_response_content(result_data)
-                    if content and len(content) > 10:
-                        print(f"[API] (优化策略) 调用成功！URL: {test_url}, 图片格式: {image_format}")
-                        # 缓存成功策略
-                        final_api_config = temp_api_config.copy()
-                        def successful_payload_builder(m_id, i_str, p_str):
-                            return self._build_payload_from_template(payload_template_type, m_id, i_str, p_str, final_api_config)
-                        strategy_to_cache = {
-                            "type": "unified_adaptive", "api_type_used": api_type, "successful_url": test_url,
-                            "payload_builder": successful_payload_builder, "auth_method": auth_method,
-                            "auth_header": auth_header_name, "extra_headers": api_config.get("extra_headers")
-                        }
-                        if api_group == "first": self.first_api_successful_strategy = strategy_to_cache
-                        elif api_group == "second": self.second_api_successful_strategy = strategy_to_cache
-                        print(f"[API] (优化策略) 已缓存 {api_group} API 的成功策略。")
-                        return content, None
-                    else:
-                        print(f"[API] 响应内容为空或过短: {content}")
-                        # 内容问题，但请求成功，不再回退，继续下一个URL
-                        continue
-
-                elif response.status_code == 400 and img_str: # 仅在有图片时，400才可能与格式有关
-                    # 步骤3: 触发回退机制
-                    print(f"[API] (优化策略) 收到400错误，回退尝试 pure_base64 格式。")
-                    image_format_fallback = "pure_base64"
-                    
-                    temp_api_config_fallback = api_config.copy()
-                    temp_api_config_fallback["image_url_format"] = image_format_fallback
-                    payload_fallback = self._build_payload_from_template(payload_template_type, model_id, img_str, prompt, temp_api_config_fallback)
-
-                    response_fallback = self._robust_api_call(test_url, headers, payload_fallback, max_retries=1)
-                    if response_fallback and response_fallback.status_code == 200:
-                        result_data_fallback = response_fallback.json()
-                        content_fallback = self._extract_response_content(result_data_fallback)
-                        if content_fallback and len(content_fallback) > 10:
-                            print(f"[API] (优化策略) 回退调用成功！URL: {test_url}, 图片格式: {image_format_fallback}")
-                            # 缓存成功的回退策略
-                            final_api_config = temp_api_config_fallback.copy()
-                            def successful_payload_builder(m_id, i_str, p_str):
-                                return self._build_payload_from_template(payload_template_type, m_id, i_str, p_str, final_api_config)
-                            strategy_to_cache = {
-                                "type": "unified_adaptive", "api_type_used": api_type, "successful_url": test_url,
-                                "payload_builder": successful_payload_builder, "auth_method": auth_method,
-                                "auth_header": auth_header_name, "extra_headers": api_config.get("extra_headers")
-                            }
-                            if api_group == "first": self.first_api_successful_strategy = strategy_to_cache
-                            elif api_group == "second": self.second_api_successful_strategy = strategy_to_cache
-                            print(f"[API] (优化策略) 已缓存 {api_group} API 的成功回退策略。")
-                            return content_fallback, None
-                    # 如果回退也失败，则记录日志，然后让循环继续到下一个URL
-                    print(f"[API] (优化策略) 回退尝试 pure_base64 格式失败。")
-
-                elif response.status_code == 404:
-                    print(f"[API] 端点不存在 (404)，此URL无效，尝试下一个URL。")
-                    break # 跳出循环，直接尝试下一个URL
-                else:
-                    # 其他错误，不触发回退
-                    error_msg = f"API调用失败 (URL: {test_url}), 状态码: {response.status_code}, 响应: {response.text[:150]}"
-                    print(f"[API] {error_msg}")
-                    # 对于其他错误(如401, 403)，直接尝试下一个URL
-                    continue
-
-            except requests.exceptions.RequestException as e:
-                print(f"[API] 请求异常 (URL: {test_url}): {e}")
-                break # 请求异常通常是URL问题，跳到下一个URL
-
-        return None, f"所有URL和图片格式组合均失败 (API类型: {api_type})"
-
-    def _extract_response_content(self, response_data: dict) -> str:
-        extraction_paths = [
-            lambda d: d.get("choices", [{}])[0].get("message", {}).get("content"),
-            lambda d: d.get("choices", [{}])[0].get("text"),
-            lambda d: d.get("Response", {}).get("Choices", [{}])[0].get("Message", {}).get("Content"),
-            lambda d: d.get("result"), lambda d: d.get("answer"), lambda d: d.get("response"), lambda d: d.get("content"),
-            lambda d: d.get("output", {}).get("choices", [{}])[0].get("message", {}).get("content"),
-            lambda d: d.get("output", {}).get("text"),
-            lambda d: d.get("data", {}).get("content"), lambda d: d.get("data", {}).get("text"),
-            lambda d: d.get("data", [{}])[0].get("content") if isinstance(d.get("data"), list) else None,
-            lambda d: d.get("message"), lambda d: d.get("text"), lambda d: d.get("generated_text"),
-        ]
-        for extractor in extraction_paths:
-            try:
-                content = extractor(response_data)
-                if content and isinstance(content, str) and content.strip():
-                    return content.strip()
-            except (KeyError, IndexError, TypeError, AttributeError):
-                continue
-        return str(response_data)
-
-    def _robust_api_call(self, url, headers, payload, max_retries=3):
-        for attempt in range(max_retries):
-            try:
-                timeout = 30 + (attempt * 15)
-                print(f"[API] 第 {attempt + 1} 次尝试，超时时间: {timeout}s")
-                response = self.session.post(url, headers=headers, json=payload, timeout=timeout, verify=True)
-                if response.status_code == 200:
-                    return response
-                elif response.status_code in [429, 502, 503, 504]:
-                    wait_time = (attempt + 1) * 2
-                    print(f"[API] 状态码 {response.status_code}，等待 {wait_time}s 后重试")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    return response
-            except requests.exceptions.Timeout:
-                print(f"[API] 第 {attempt + 1} 次尝试超时")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-            except requests.exceptions.ConnectionError as e:
-                print(f"[API] 连接错误: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(3)
-            except Exception as e:
-                print(f"[API] 其他错误: {str(e)}")
-                break
-        return None
-
-    def _get_user_friendly_error_message(self, error_msg: str, api_type: str) -> str:
-        error_solutions = {
-            "404": {"default": "API端点不存在，请检查URL是否正确"},
-            "401": {"default": "API密钥无效或已过期，请检查密钥是否正确"},
-            "403": {"default": "API访问被拒绝，请检查密钥权限或账户余额"},
-            "429": {"default": "API调用频率过高，请稍后重试"},
-            "500": {"default": "API服务器内部错误，请稍后重试"}
-        }
-        status_code = None
-        for code in error_solutions:
-            if code in error_msg:
-                status_code = code
-                break
-        if status_code:
-            return f"{error_msg}\n\n💡 建议: {error_solutions[status_code].get(api_type, error_solutions[status_code]['default'])}"
-        return error_msg
-    
-    def _execute_cached_strategy(self, strategy: dict, api_key: str, model_id: str, img_str: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
-        try:
-            successful_url = strategy.get("successful_url")
-            payload_builder = strategy.get("payload_builder")
-            if not successful_url or not payload_builder:
-                print("[API] 缓存策略无效: 缺少URL或payload_builder")
-                if strategy is self.first_api_successful_strategy: self.first_api_successful_strategy = None
-                elif strategy is self.second_api_successful_strategy: self.second_api_successful_strategy = None
-                return None, "缓存策略无效"
-            new_payload = payload_builder(model_id, img_str, prompt)
-            headers = {"Content-Type": "application/json"}
-            if strategy.get("extra_headers"): headers.update(strategy.get("extra_headers"))
-            auth_method = strategy.get("auth_method")
-            auth_header_name = strategy.get("auth_header")
-            if auth_method == "bearer" and auth_header_name:
-                headers[auth_header_name] = f"Bearer {api_key}"
-            elif auth_method == "api_key" and auth_header_name:
-                headers[auth_header_name] = api_key
-            print(f"[API] 执行缓存策略: 类型={strategy.get('api_type_used', 'Unknown')}, URL={successful_url}, AuthMethod={auth_method}")
-            response = self._robust_api_call(successful_url, headers, new_payload, max_retries=1)
-            if response is None:
-                if strategy is self.first_api_successful_strategy: self.first_api_successful_strategy = None
-                elif strategy is self.second_api_successful_strategy: self.second_api_successful_strategy = None
-                return None, "API请求失败，无响应"
-            if response.status_code == 200:
-                content = self._extract_response_content(response.json())
-                if content and len(content) > 10:
-                    return content, None
-                error_msg = "API响应内容为空或过短"
-            else:
-                error_msg = f"API调用失败，状态码: {response.status_code}, 响应: {response.text[:100]}"
-            if strategy is self.first_api_successful_strategy: self.first_api_successful_strategy = None
-            elif strategy is self.second_api_successful_strategy: self.second_api_successful_strategy = None
-            return None, error_msg
-        except Exception as e:
-            if strategy is self.first_api_successful_strategy: self.first_api_successful_strategy = None
-            elif strategy is self.second_api_successful_strategy: self.second_api_successful_strategy = None
-            return None, f"执行缓存策略时发生异常: {str(e)}"
-
-    def test_api_connection(self, api_type="first"):
-        try:
-            if api_type == "first":
-                if not all([self.config_manager.first_api_key, self.config_manager.first_modelID, self.config_manager.first_api_url]):
-                    return False, "第一组API配置不完整"
-                api_url, api_key, model_id = self.config_manager.first_api_url, self.config_manager.first_api_key, self.config_manager.first_modelID
-                group_name = "第一组"
-            elif api_type == "second":
-                if not all([self.config_manager.second_api_key, self.config_manager.second_modelID, self.config_manager.second_api_url]):
-                    return False, "第二组API配置不完整"
-                api_url, api_key, model_id = self.config_manager.second_api_url, self.config_manager.second_api_key, self.config_manager.second_modelID
-                group_name = "第二组"
-            else:
-                return False, "无效的API类型进行测试"
-            
-            detected_type = self._detect_api_type(api_url)
-            print(f"[API Test] 测试{group_name}API，检测类型: {detected_type}, URL: {api_url}")
-            
-            # 永久修改为纯文本测试
-            test_prompt = "你好"
-            test_img_str = "" # 传递空字符串表示无图片
-            
-            result, error = self._call_api_with_adaptive_strategy(api_url, api_key, model_id, test_img_str, test_prompt, detected_type, api_type)
-            
+            provider_name = PROVIDER_CONFIGS.get(provider, {}).get("name", provider)
             if result and not error:
-                return True, f"{group_name}API连接成功 (检测类型: {detected_type})"
+                return True, f"{group_name}API ({provider_name}) 连接成功！"
             else:
-                # 增强错误提示，为所有测试失败的情况增加通用建议
-                enhanced_error = f"{group_name}API连接失败 (检测类型: {detected_type}): {error}"
-                suggestion = "\n\n💡 请检查您输入的API URL、Key、ID。必须使用视觉模型，确保账户余额充足。"
+                enhanced_error = f"{group_name}API ({provider_name}) 连接失败: {error}"
+                suggestion = "\n\n💡 请检查您的API Key、模型ID是否正确，并确保账户有充足余额。"
                 return False, enhanced_error + suggestion
         except Exception as e:
             error_detail = traceback.format_exc()
             print(f"[API Test] API测试过程中发生异常: {str(e)}\n{error_detail}")
             return False, f"API测试异常: {str(e)}"
 
-    def _build_payload_from_template(self, template_type: str, model_id: str, img_str: str, prompt: str, api_config: dict) -> dict:
-        clean_prompt = prompt.strip()
-        
-        # 如果没有图片，则发送纯文本请求
+    def _preprocess_api_key(self, api_key: str, auth_method: str) -> Tuple[str, Optional[str]]:
+        """
+        预处理API Key，增强格式验证和兼容性
+
+        Args:
+            api_key: 原始API Key
+            auth_method: 鉴权方法
+
+        Returns:
+            tuple: (processed_key, error_message)
+        """
+        if not api_key or not api_key.strip():
+            return "", "API Key不能为空"
+
+        api_key = api_key.strip()
+
+        if auth_method == "bearer":
+            # 处理Bearer token的重复前缀问题
+            if api_key.lower().startswith("bearer "):
+                api_key = api_key[7:].strip()  # 移除"Bearer "前缀
+            return api_key, None
+
+        elif auth_method == "tencent_signature_v3":
+            # 处理腾讯API Key格式
+            # 支持中文冒号自动转换
+            api_key = api_key.replace("：", ":")  # 中文冒号转英文冒号
+
+            # 检查冒号数量
+            colon_count = api_key.count(":")
+            if colon_count == 0:
+                return "", "腾讯API Key格式错误：缺少冒号分隔符，应为 'SecretId:SecretKey' 格式"
+            elif colon_count > 1:
+                return "", "腾讯API Key格式错误：冒号数量过多，应为 'SecretId:SecretKey' 格式"
+
+            # 分离SecretId和SecretKey
+            parts = api_key.split(":", 1)
+            secret_id, secret_key = parts[0].strip(), parts[1].strip()
+
+            # 验证格式合理性
+            if not secret_id:
+                return "", "腾讯API Key格式错误：SecretId不能为空"
+            if not secret_key:
+                return "", "腾讯API Key格式错误：SecretKey不能为空"
+            if len(secret_id) < 10:
+                return "", "腾讯API Key格式错误：SecretId长度过短"
+            if len(secret_key) < 10:
+                return "", "腾讯API Key格式错误：SecretKey长度过短"
+
+            return f"{secret_id}:{secret_key}", None
+
+        # 其他鉴权方法直接返回
+        return api_key, None
+
+    def _execute_api_call(self, provider: str, api_key: str, model_id: str, img_str: str, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        if provider not in PROVIDER_CONFIGS:
+            return None, f"未知的供应商标识: {provider}"
+
+        config = PROVIDER_CONFIGS[provider]
+        url = config["url"]
+        headers = {"Content-Type": "application/json"}
+        auth_method = config.get("auth_method", "bearer")
+
+        # 预处理API Key
+        processed_key, key_error = self._preprocess_api_key(api_key, auth_method)
+        if key_error:
+            return None, key_error
+
+        # 先构建 payload，因为腾讯签名需要用到它
+        try:
+            builder_func = getattr(self, config["payload_builder"])
+            payload = builder_func(model_id, img_str, prompt)
+        except Exception as e:
+            return None, f"构建请求体失败: {e}"
+
+        # 鉴权处理
+        if auth_method == "bearer":
+            headers["Authorization"] = f"Bearer {processed_key}"
+        elif auth_method == "google_api_key_in_url": # For Gemini
+             url += f"?key={processed_key}"
+        elif auth_method == "tencent_signature_v3":
+            # 腾讯云签名方法 v3 - 使用预处理后的Key
+            secret_id, secret_key = processed_key.split(":", 1)
+            payload_str = json.dumps(payload, separators=(',', ':'))
+
+            # 从配置中读取服务信息，避免硬编码
+            service_info = config.get("service_info", {})
+            service = service_info.get("service", "hunyuan")
+            region = service_info.get("region", "ap-guangzhou")
+            version = service_info.get("version", "2023-09-01")
+            action = service_info.get("action", "ChatCompletions")
+
+            host = service_info.get("host", "hunyuan.tencentcloudapi.com")
+            authorization, timestamp = self._build_tencent_signature_v3(
+                secret_id, secret_key, service, region, action, version, payload_str, host
+            )
+            headers["Authorization"] = authorization
+            headers["X-TC-Timestamp"] = timestamp
+            headers["X-TC-Version"] = version
+            headers["X-TC-Action"] = action
+            headers["X-TC-Region"] = region
+
+        try:
+            response = self.session.post(url, headers=headers, json=payload, timeout=60)
+
+            if response.status_code == 200:
+                content = self._extract_response_content(response.json(), provider)
+                if content:
+                    return content, None
+                else:
+                    return None, f"API响应内容为空或无法解析。原始响应: {str(response.json())[:200]}"
+            else:
+                error_text = response.text[:200]
+                friendly_error = self._create_api_error_message(provider, response.status_code, error_text)
+                return None, friendly_error
+        except requests.exceptions.RequestException as e:
+            friendly_error = self._create_network_error_message(e)
+            return None, friendly_error
+
+    def _extract_response_content(self, data: Dict[str, Any], provider: str) -> Optional[str]:
+        """从API响应中提取内容"""
+        try:
+            if provider in ["openai", "moonshot", "openrouter", "zhipu", "volcengine", "aliyun", "baidu"]:
+                return data["choices"][0]["message"]["content"]
+            if provider == "gemini":
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            if provider == "tencent":
+                return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return None # 解析失败
+        return str(data) # Fallback
+
+    def _get_pure_base64(self, img_str: str) -> str:
+        if not img_str: return ""
+        marker = "base64,"
+        pos = img_str.find(marker)
+        return img_str[pos + len(marker):] if pos != -1 else img_str
+
+    # ==========================================================================
+    #  各厂商专属的Payload构建函数
+    # ==========================================================================
+    def _build_openai_compatible_payload(self, model_id, img_str, prompt):
+        """
+        适用于大多数与OpenAI兼容的厂商 (Moonshot, 智谱, Baidu V2, Aliyun-Compatible等)
+        核心原则: 图片在前，文本在后，以保证最大兼容性。
+        """
         if not img_str:
+            return {"model": model_id, "messages": [{"role": "user", "content": prompt}], "max_tokens": 4096}
+
+        pure_base64 = self._get_pure_base64(img_str)
+        return {
+            "model": model_id,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{pure_base64}"}},
+                {"type": "text", "text": prompt}
+            ]}],
+            "max_tokens": 4096
+        }
+
+
+
+    def _build_volcengine_payload(self, model_id, img_str, prompt):
+        """
+        专为火山引擎定制 - 符合官方API文档格式
+
+        AI自动改卷程序专用优化 (2025-09-13 更新):
+        ============================================
+        当前优化: 默认使用高细节模式提升手写文字识别精度
+        适用场景: AI批改学生答案图片，需准确识别手写内容
+
+        优化详情:
+        - detail: "high" - 高细节模式，适用于复杂手写识别
+        - 优势: 更好的文字识别精度，适合教育场景
+        - 权衡: 可能增加响应时间和token消耗
+
+        后续优化计划:
+        ============================================
+        1. 图片质量自适应: 根据图片复杂度自动选择detail等级
+        2. 模型验证: 确保用户选择的模型支持视觉输入
+        3. 性能监控: 添加图片大小和处理时间统计
+        4. 配置选项: 允许用户自定义detail参数
+        5. 批量优化: 支持多图片同时处理
+        """
+        if not img_str:
+            # 纯文本模式 - 不涉及图片时使用简单格式
             return {
                 "model": model_id,
-                "messages": [{"role": "user", "content": clean_prompt}],
-                "max_tokens": 4000, "stream": False
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 4096
             }
 
-        # --- 以下是处理图片请求的逻辑 ---
-        base64_marker = "base64,"
-        marker_pos = img_str.find(base64_marker)
-        if marker_pos != -1:
-            pure_base64_str = img_str[marker_pos + len(base64_marker):]
-        else:
-            pure_base64_str = img_str
-        
-        image_url_format = api_config.get("image_url_format", "data_uri")
-        if image_url_format == "pure_base64":
-            url_content = pure_base64_str
-        else:
-            url_content = f"data:image/jpeg;base64,{pure_base64_str}"
-
-        payload = {
+        # 视觉模式 - AI改卷专用配置
+        # 按照火山引擎官方文档：image在前，text在后
+        pure_base64 = self._get_pure_base64(img_str)
+        return {
             "model": model_id,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        # 遵循官方文档建议，图片在前，文本在后
-                        {"type": "image_url", "image_url": {"url": url_content}},
-                        {"type": "text", "text": clean_prompt}
-                    ]
-                }
-            ],
-            "max_tokens": 4000,
-            "stream": False
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{pure_base64}",
+                            "detail": "high"  # 高细节模式 - 优化手写文字识别
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ]
+            }],
+            "max_tokens": 4096
         }
-        if template_type == "volcengine_vision_v1":
-            payload["thinking"] = {"type": "disabled"}
-            payload["max_tokens"] = 4096
-        return payload
+
+
+
+
+
+    def _build_tencent_payload(self, model_id, img_str, prompt):
+        """专为腾讯混元定制 - 支持所有视觉模型
+
+        更新历史 (Update History):
+        - 2025-09-13: 重构 payload 构建逻辑
+          * 统一使用 ChatCompletions 接口格式
+          * 实现智能视觉模型检测
+          * 支持动态模型名称输入
+          * 自动选择 Contents vs Content 格式
+
+        支持的视觉模型包括：
+        - hunyuan-vision (基础多模态)
+        - hunyuan-turbos-vision (旗舰模型)
+        - hunyuan-turbos-vision-20250619 (最新旗舰)
+        - hunyuan-t1-vision (深度思考)
+        - hunyuan-t1-vision-20250619 (最新深度思考)
+        - hunyuan-large-vision (多语言支持)
+
+        未来维护注意事项 (Future Maintenance Notes):
+        - 如果新模型名称不含 "vision"，需要更新检测逻辑
+        - 如果腾讯改变 payload 格式，需要相应调整
+        - 支持的图像格式：JPEG (base64编码)
+        - 图像URL格式：data:image/jpeg;base64,{base64_data}
+
+        Args:
+            model_id: 模型名称，由用户界面输入
+            img_str: 图像base64字符串（可选）
+            prompt: 文本提示
+
+        Returns:
+            dict: 符合腾讯API格式的请求payload
+        """
+        # 腾讯所有视觉模型都支持图像输入，通过模型名中的 "vision" 标识
+        is_vision_model = "vision" in model_id.lower()
+
+        if not img_str or not is_vision_model:
+            # 纯文本模式或非视觉模型
+            return {
+                "Model": model_id,
+                "Messages": [{"Role": "user", "Content": prompt}],
+                "Stream": False
+            }
+
+        # 视觉模型支持图像输入
+        pure_base64 = self._get_pure_base64(img_str)
+        return {
+            "Model": model_id,
+            "Messages": [{
+                "Role": "user",
+                "Contents": [
+                    {"Type": "text", "Text": prompt},
+                    {"Type": "image_url", "ImageUrl": {"Url": f"data:image/jpeg;base64,{pure_base64}"}}
+                ]
+            }],
+            "Stream": False
+        }
+
+
+
+    def _build_gemini_payload(self, model_id, img_str, prompt):
+        """专为 Google Gemini 定制"""
+        if not img_str:
+             return {"contents": [{"parts": [{"text": prompt}]}]}
+
+        pure_base64 = self._get_pure_base64(img_str)
+        return {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": pure_base64}}
+                ]
+            }]
+        }
+
+    def _create_api_error_message(self, provider: str, status_code: int, response_text: str) -> str:
+        """根据API返回的错误，生成对用户更友好的错误信息。"""
+        provider_name = PROVIDER_CONFIGS.get(provider, {}).get("name", provider)
+
+        if status_code == 401 or status_code == 403:
+            return (f"【认证失败】{provider_name} 的 API Key 无效或已过期。\n"
+                    f"解决方案：请前往 {provider_name} 官网，检查并重新复制粘贴您的 API Key。")
+
+        if status_code == 400:
+            if "zhipu" in provider and "1210" in response_text:
+                return (f"【参数错误】发送给 {provider_name} 的模型ID可能有误。\n"
+                        f"解决方案：请检查您为 {provider_name} 设置的模型ID是否正确、可用，且您的账户有权访问。")
+            else:
+                return (f"【请求错误】发送给 {provider_name} 的请求参数有误。\n"
+                        f"常见原因：模型ID填写错误或不兼容。请核对后重试。")
+
+        if status_code == 429:
+            return (f"【请求超限】您对 {provider_name} 的API请求过于频繁，已触发限流。\n"
+                    f"解决方案：请稍等片刻再试，或在程序中增大'等待时间'。")
+
+        # 返回一个通用的、但更清晰的错误
+        return (f"【服务异常】{provider_name} 服务器返回了未处理的错误 (状态码: {status_code})。\n"
+                f"服务器响应(部分): {response_text[:100]}")
+
+    def _create_network_error_message(self, error: requests.exceptions.RequestException) -> str:
+        """根据网络异常类型，生成用户友好的信息"""
+        error_str = str(error)
+        if "Invalid leading whitespace" in error_str:
+            return ("【格式错误】您的 API Key 中可能包含了非法字符（如换行或多余的文字）。\n"
+                    "解决方案：请彻底清空API Key输入框，然后从官网【精确地】只复制Key本身，再粘贴回来。")
+
+        if "timed out" in error_str.lower():
+            return ("【网络超时】连接API服务器超时。\n"
+                    "解决方案：请检查您的网络连接是否通畅，或稍后再试。")
+
+        # 通用网络错误
+        return f"【网络连接失败】无法连接到API服务器。\n请检查您的网络设置和防火墙。错误详情: {error_str[:150]}"
+
+    def update_config_from_manager(self):
+        """
+        这个方法在我们的新架构中不再需要。
+        因为 `call_api` 等方法每次都会直接从 `config_manager` 读取最新的配置。
+        保留此空方法以防止旧代码调用时出错。
+        """
+        pass
+
+# --- END OF FILE api_service.py ---

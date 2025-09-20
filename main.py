@@ -192,10 +192,10 @@ class Application:
         try:
             self.signal_manager.disconnect_all() # 断开旧连接
 
-            self.signal_manager.connect(
-                self.worker.update_signal,
-                self.main_window.update_suggestion_text
-            )
+            # self.signal_manager.connect(
+            #     self.worker.update_signal,
+            #     self.main_window.update_suggestion_text
+            # )
             self.signal_manager.connect(
                 self.worker.log_signal,
                 self.main_window.log_message
@@ -298,6 +298,37 @@ class Application:
 
         self.main_window.log_message("配置已成功加载并应用。")
 
+    def _get_csv_filepath(self, record_data, worker=None):
+        """获取CSV文件路径的辅助函数"""
+        date_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S')).split('_')[0]
+
+        if getattr(sys, 'frozen', False):
+            base_dir = pathlib.Path(sys.executable).parent
+        else:
+            base_dir = pathlib.Path(__file__).parent
+
+        record_dir = base_dir / "阅卷记录"
+        record_dir.mkdir(exist_ok=True)
+
+        date_dir = record_dir / date_str
+        date_dir.mkdir(exist_ok=True)
+
+        if worker:
+            dual_evaluation = worker.parameters.get('dual_evaluation', False)
+            question_count = len(worker.parameters.get('question_configs', []))
+        else:
+            dual_evaluation = record_data.get('is_dual_evaluation_run', False)
+            question_count = record_data.get('total_questions_in_run', 1)
+
+        if question_count == 0:
+            question_count = 1
+
+        formatted_date = datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
+        csv_filename = f"{formatted_date}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
+        csv_filepath = date_dir / csv_filename
+
+        return csv_filepath
+
     def _save_summary_record(self, record_data):
         """保存汇总记录到对应的CSV文件
 
@@ -308,33 +339,8 @@ class Application:
             import csv
             import os
 
-            # 获取当前日期
-            date_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S')).split('_')[0]
-
-            # 创建记录目录
-            if getattr(sys, 'frozen', False):
-                # 如果是打包后的exe，使用exe所在的实际目录
-                base_dir = pathlib.Path(sys.executable).parent
-            else:
-                # 否则，使用当前文件所在的目录
-                base_dir = pathlib.Path(__file__).parent
-            record_dir = base_dir / "阅卷记录"
-            record_dir.mkdir(exist_ok=True)
-
-            # 创建日期子目录
-            date_dir = record_dir / date_str
-            date_dir.mkdir(exist_ok=True)
-
-            # 判断当前是否为双评模式
-            dual_evaluation = self.worker.parameters.get('dual_evaluation', False)
-            question_count = len(self.worker.parameters.get('question_configs', []))
-            if question_count == 0:
-                question_count = 1
-
-            # 构建文件名
-            formatted_date = datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
-            csv_filename = f"{formatted_date}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
-            csv_filepath = date_dir / csv_filename
+            csv_filepath = self._get_csv_filepath(record_data, self.worker)
+            csv_filename = csv_filepath.name
 
             # 从 record_data 构建汇总行，而不是依赖 summary_text
             status_map = {
@@ -349,17 +355,17 @@ class Application:
                 status_text += f" ({interrupt_reason})"
 
             summary_fields = [
-                f"--- 批次阅卷汇总 ({record_data.get('timestamp', 'N/A_N/A').split('_')[1]}) ---",
+                f"--- 批次阅卷汇总 ({record_data.get('timestamp', '未提供_未提供').split('_')[1]}) ---",
                 f"状态: {status_text}",
-                f"计划/完成: {record_data.get('total_questions_attempted', 'N/A')} / {record_data.get('questions_completed', 'N/A')} 个",
+                f"计划/完成: {record_data.get('total_questions_attempted', '未提供')} / {record_data.get('questions_completed', '未提供')} 个",
                 f"总用时: {record_data.get('total_elapsed_time_seconds', 0):.2f} 秒",
                 f"模式: {'双评' if record_data.get('dual_evaluation_enabled') else '单评'}",
             ]
             
             if record_data.get('dual_evaluation_enabled'):
-                summary_fields.append(f"模型: {record_data.get('first_model_id', 'N/A')} vs {record_data.get('second_model_id', 'N/A')}")
+                summary_fields.append(f"模型: {record_data.get('first_model_id', '未指定')} vs {record_data.get('second_model_id', '未指定')}")
             else:
-                summary_fields.append(f"模型: {record_data.get('first_model_id', 'N/A')}")
+                summary_fields.append(f"模型: {record_data.get('first_model_id', '未指定')}")
 
             # 追加汇总行到文件并在前后添加空白行
             with open(csv_filepath, 'a', newline='', encoding='utf-8-sig') as f:
@@ -386,7 +392,7 @@ class Application:
         """
         重构后的保存阅卷记录到CSV文件的方法。
         - 动态构建CSV表头和行数据，支持单评和双评模式。
-        - 包含置信度分数和理由，并对低置信度项进行标记。
+        - 包含可信度分数和理由，并对低可信度项进行标记。
         """
         try:
             # 记录汇总信息
@@ -394,32 +400,16 @@ class Application:
                 return self._save_summary_record(record_data)
 
             # --- 1. 准备文件路径 ---
-            date_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y%m%d_%H%M%S')).split('_')[0]
-            
-            if getattr(sys, 'frozen', False):
-                base_dir = pathlib.Path(sys.executable).parent
-            else:
-                base_dir = pathlib.Path(__file__).parent
-            
-            record_dir = base_dir / "阅卷记录"
-            record_dir.mkdir(exist_ok=True)
-            date_dir = record_dir / date_str
-            date_dir.mkdir(exist_ok=True)
-
-            is_dual_run = record_data.get('is_dual_evaluation_run', False)
-            question_count = record_data.get('total_questions_in_run', 1)
-            if question_count == 0: question_count = 1
-
-            formatted_date = datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
-            csv_filename = f"{formatted_date}_共{question_count}题_{'双评' if is_dual_run else '单评'}.csv"
-            csv_filepath = date_dir / csv_filename
+            csv_filepath = self._get_csv_filepath(record_data)
+            csv_filename = csv_filepath.name
             file_exists = os.path.isfile(csv_filepath)
 
             # --- 2. 格式化函数 ---
-            def format_confidence(score_value):
-                if score_value in [1, "1"]: return "!! 1"
-                if score_value in [2, "2"]: return "!! 2"
-                return str(score_value) if score_value is not None else "N/A"
+            # 此版本暂时不启用置信度功能，今后如果需要再启用
+            # def format_confidence(score_value):
+            #     if score_value in [1, "1"]: return "!! 1"
+            #     if score_value in [2, "2"]: return "!! 2"
+            #     return str(score_value) if score_value is not None else "未提供"
 
             # --- 3. 动态构建表头和行 ---
             is_dual = record_data.get('is_dual_evaluation', False)
@@ -432,42 +422,74 @@ class Application:
             rows_to_write = []
 
             if is_dual:
-                headers.extend(["API标识", "分差阈值", "学生答案摘要", "评分依据", "AI分项得分", "AI原始总分", "识别置信度", "置信度理由", "双评分差", "最终得分"])
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # headers.extend(["API标识", "分差阈值", "学生答案摘要", "评分依据", "AI分项得分", "AI原始总分", "识别可信度", "可信度理由", "双评分差", "最终得分"])
+                headers.extend(["API标识", "分差阈值", "学生答案摘要", "评分依据", "AI分项得分", "AI原始总分", "双评分差", "最终得分"])
                 
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # row1 = base_row + [
+                #     "API-1",
+                #     str(record_data.get('score_diff_threshold', "未提供")),
+                #     record_data.get('api1_student_answer_summary', '未提供'),
+                #     record_data.get('api1_scoring_basis', '未提供'),
+                #     str(record_data.get('api1_itemized_scores', [])),
+                #     str(record_data.get('api1_raw_score', 0.0)),
+                #     format_confidence(record_data.get('api1_confidence_score')),
+                #     record_data.get('api1_confidence_reason', '未提供'),
+                #     f"{record_data.get('score_difference', 0.0):.2f}",
+                #     final_total_score_str
+                # ]
+                # row2 = base_row + [
+                #     "API-2",
+                #     str(record_data.get('score_diff_threshold', "未提供")),
+                #     record_data.get('api2_student_answer_summary', '未提供'),
+                #     record_data.get('api2_scoring_basis', '未提供'),
+                #     str(record_data.get('api2_itemized_scores', [])),
+                #     str(record_data.get('api2_raw_score', 0.0)),
+                #     format_confidence(record_data.get('api2_confidence_score')),
+                #     record_data.get('api2_confidence_reason', '未提供'),
+                #     f"{record_data.get('score_difference', 0.0):.2f}",
+                #     final_total_score_str
+                # ]
                 row1 = base_row + [
                     "API-1",
-                    str(record_data.get('score_diff_threshold', "N/A")),
-                    record_data.get('api1_student_answer_summary', 'N/A'),
-                    record_data.get('api1_scoring_basis', 'N/A'),
+                    str(record_data.get('score_diff_threshold', "未提供")),
+                    record_data.get('api1_student_answer_summary', '未提供'),
+                    record_data.get('api1_scoring_basis', '未提供'),
                     str(record_data.get('api1_itemized_scores', [])),
                     str(record_data.get('api1_raw_score', 0.0)),
-                    format_confidence(record_data.get('api1_confidence_score')),
-                    record_data.get('api1_confidence_reason', 'N/A'),
                     f"{record_data.get('score_difference', 0.0):.2f}",
                     final_total_score_str
                 ]
                 row2 = base_row + [
                     "API-2",
-                    str(record_data.get('score_diff_threshold', "N/A")),
-                    record_data.get('api2_student_answer_summary', 'N/A'),
-                    record_data.get('api2_scoring_basis', 'N/A'),
+                    str(record_data.get('score_diff_threshold', "未提供")),
+                    record_data.get('api2_student_answer_summary', '未提供'),
+                    record_data.get('api2_scoring_basis', '未提供'),
                     str(record_data.get('api2_itemized_scores', [])),
                     str(record_data.get('api2_raw_score', 0.0)),
-                    format_confidence(record_data.get('api2_confidence_score')),
-                    record_data.get('api2_confidence_reason', 'N/A'),
                     f"{record_data.get('score_difference', 0.0):.2f}",
                     final_total_score_str
                 ]
                 rows_to_write.extend([row1, row2])
             else: # 单评模式
-                headers.extend(["学生答案摘要", "评分依据", "AI分项得分", "识别置信度", "置信度理由", "最终得分"])
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # headers.extend(["学生答案摘要", "评分依据", "AI分项得分", "识别可信度", "可信度理由", "最终得分"])
+                headers.extend(["学生答案摘要", "评分依据", "AI分项得分", "最终得分"])
                 
+                # 此版本暂时不启用置信度功能，今后如果需要再启用
+                # single_row = base_row + [
+                #     record_data.get('student_answer', '无法提取'),
+                #     record_data.get('reasoning_basis', '无法提取'),
+                #     record_data.get('sub_scores', '未提供'),
+                #     format_confidence(record_data.get('confidence_score')),
+                #     record_data.get('confidence_reason', '未提供'),
+                #     final_total_score_str
+                # ]
                 single_row = base_row + [
                     record_data.get('student_answer', '无法提取'),
                     record_data.get('reasoning_basis', '无法提取'),
-                    record_data.get('sub_scores', 'N/A'),
-                    format_confidence(record_data.get('confidence_score')),
-                    record_data.get('confidence_reason', 'N/A'),
+                    record_data.get('sub_scores', '未提供'),
                     final_total_score_str
                 ]
                 rows_to_write.append(single_row)

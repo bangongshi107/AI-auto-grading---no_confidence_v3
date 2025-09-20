@@ -12,17 +12,20 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
+hiddenimports = collect_submodules('numpy') + collect_submodules('cv2')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('setting', 'setting')],
-    hiddenimports=['PyQt5.sip', 'api_service', 'auto_thread', 'config_manager', 'ui_components.main_window', 'ui_components.question_config_dialog', 'pyautogui', 'PIL', 'appdirs', 'requests', 'numpy', 'cv2'],
+    hiddenimports=['PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets', 'api_service', 'auto_thread', 'config_manager', 'ui_components.main_window', 'ui_components.question_config_dialog', 'pyautogui', 'PIL', 'PIL.ImageGrab', 'PIL.Image', 'PIL.ImageDraw', 'appdirs', 'requests', 'winsound'] + hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter', 'unittest', 'doctest'],
     noarchive=False,
     optimize=0,
 )

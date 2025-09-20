@@ -1,3 +1,5 @@
+# --- START OF FILE question_config_dialog.py (Corrected) ---
+
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                             QLineEdit, QPushButton, QCheckBox, QGroupBox,
                             QComboBox, QTextEdit, QSpinBox, QMessageBox,
@@ -15,23 +17,21 @@ class MyWindow2(QMainWindow):
     
     def update_ui_state(self, is_running):
         """代理方法，转发到主窗口"""
-        if hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'update_ui_state'):
+        if self.parent and hasattr(self.parent, 'update_ui_state'):
             self.parent.update_ui_state(is_running)
-        elif hasattr(self, 'main_window') and self.main_window and hasattr(self.main_window, 'update_ui_state'):
-            self.main_window.update_ui_state(is_running)
     
     def __init__(self, parent=None, question_index=None):
         super(MyWindow2, self).__init__(parent)
-        
+
         self.question_index = question_index
-        
+
         # 根据题目编号设置不同的窗口标题
         title = f"第{question_index}题答案框" if question_index else "答案框"
         self.setWindowTitle(title)
         self.resize(400, 300)
-        
-        # 设置窗口样式 - 置顶、无边框、工具窗口
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
+
+        # 设置窗口样式 - 无边框、工具窗口（移除WindowStaysOnTopHint，避免与父窗口冲突）
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         
         # 设置窗口属性为透明背景
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -57,9 +57,7 @@ class MyWindow2(QMainWindow):
         pass
         
         print(f"第{question_index}题答案框窗口已创建" if question_index else "答案框窗口已创建")
-        if hasattr(self, 'main_window') and self.main_window and hasattr(self.main_window, 'log_message'): # 检查 main_window
-            self.main_window.log_message(f"第{question_index}题答案框窗口已创建" if question_index else "答案框窗口已创建")
-        elif hasattr(self.parent, 'log_message'): # 保留原始逻辑作为后备（尽管在此场景下parent为None）
+        if self.parent and hasattr(self.parent, 'log_message'):
             self.parent.log_message(f"第{question_index}题答案框窗口已创建" if question_index else "答案框窗口已创建")
     
     def set_confirmed_mode(self):
@@ -77,9 +75,7 @@ class MyWindow2(QMainWindow):
         """设置为编辑模式，允许调整位置和大小"""
         log_msg_start = "正在设置答案框为编辑模式..."
         print(log_msg_start) # 保留 print 语句
-        if hasattr(self, 'main_window') and self.main_window and hasattr(self.main_window, 'log_message'):
-            self.main_window.log_message(log_msg_start)
-        elif hasattr(self.parent, 'log_message'): # 后备
+        if self.parent and hasattr(self.parent, 'log_message'):
             self.parent.log_message(log_msg_start)
         
         # 彻底重置所有锁定状态
@@ -106,7 +102,7 @@ class MyWindow2(QMainWindow):
         
         # 验证状态是否正确设置
         print(f"编辑模式设置完成 - 锁定状态: {self.is_locked}, 确认状态: {self.is_confirmed}")
-        if hasattr(self.parent, 'log_message'):
+        if self.parent and hasattr(self.parent, 'log_message'):
             self.parent.log_message(f"编辑模式设置完成 - 锁定状态: {self.is_locked}, 确认状态: {self.is_confirmed}")
     
     def paintEvent(self, event):
@@ -253,17 +249,13 @@ class MyWindow2(QMainWindow):
         # 窗口显示时，设置为编辑模式
         self.set_edit_mode()
         print("答案框窗口显示事件触发")
-        if hasattr(self, 'main_window') and self.main_window and hasattr(self.main_window, 'log_message'): # 检查 main_window
-            self.main_window.log_message("答案框窗口显示事件触发")
-        elif hasattr(self.parent, 'log_message'):
+        if self.parent and hasattr(self.parent, 'log_message'):
             self.parent.log_message("答案框窗口显示事件触发")
 
     def closeEvent(self, event):
         """窗口关闭事件"""
         print("答案框窗口关闭事件触发")
-        if hasattr(self, 'main_window') and self.main_window and hasattr(self.main_window, 'log_message'): # 检查 main_window
-            self.main_window.log_message("答案框窗口关闭事件触发")
-        elif hasattr(self.parent, 'log_message'):
+        if self.parent and hasattr(self.parent, 'log_message'):
             self.parent.log_message("答案框窗口关闭事件触发")
         # 发送窗口关闭信号
         self.status_changed.emit("closed")
@@ -316,7 +308,9 @@ class QuestionConfigDialog(QDialog):
     def init_ui(self):
         """初始化UI组件"""
         self.setWindowTitle(f'配置第{self.question_index}题')
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint)
+        # --- CRITICAL FIX: 移除 Qt.WindowStaysOnTopHint ---
+        # 移除这个标志，以避免它遮挡新弹出的答案框选窗口
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint)
         self.resize(400, 500) # 恢复用户指定的固定大小
 
         # 设置对话框的默认字体
@@ -621,11 +615,19 @@ class QuestionConfigDialog(QDialog):
             # 获取当前题目的专用答案框窗口
             answer_window = self.parent.get_or_create_answer_window(self.question_index)
 
-            # 显示窗口
+            # 确保答案框是配置框的子窗口，并设置适当的窗口关系
+            if answer_window.parent() != self:
+                # 如果不是子窗口，设置为子窗口
+                answer_window.setParent(self, Qt.Window)
+                # 重新设置窗口标志，确保没有置顶冲突
+                answer_window.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+
+            # 显示窗口并确保其可见性
             answer_window.show()
             answer_window.set_edit_mode()
-            answer_window.raise_()
-            answer_window.activateWindow()
+
+            # 使用QTimer延迟执行，确保窗口完全显示后再提升
+            QTimer.singleShot(100, lambda: self._ensure_answer_window_visible(answer_window))
 
             self.parent.log_message(f"请调整第{self.question_index}题的答案框位置和大小")
 
@@ -638,6 +640,19 @@ class QuestionConfigDialog(QDialog):
             self.set_answer_button.setStyleSheet("background-color: #FF5555; color: white; font-weight: bold;")
         except Exception as e:
             self.parent.log_message(f"框定第{self.question_index}题答案区域出错: {str(e)}", is_error=True)
+
+    def _ensure_answer_window_visible(self, answer_window):
+        """确保答案框窗口可见并获得焦点"""
+        try:
+            if answer_window and answer_window.isVisible():
+                # 提升窗口到前面
+                answer_window.raise_()
+                answer_window.activateWindow()
+                # 设置焦点到答案框
+                answer_window.setFocus()
+                print("答案框窗口已提升到前面并获得焦点")
+        except Exception as e:
+            print(f"提升答案框窗口时出错: {str(e)}")
 
     def confirm_answer_area_selection(self, answer_window):
         """确认框定答案区域"""
@@ -855,3 +870,11 @@ class QuestionConfigDialog(QDialog):
             if self.score_input_group_step2: self.score_input_group_step2.setEnabled(False)
             if self.score_input_group_step3: self.score_input_group_step3.setEnabled(False)
             if self.original_score_input_group: self.original_score_input_group.setEnabled(True)
+
+    def closeEvent(self, event):
+        """窗口关闭事件，确保停止任何活动的定时器"""
+        if self.position_capture_timer and self.position_capture_timer.isActive():
+            self.position_capture_timer.stop()
+        super().closeEvent(event)
+
+# --- END OF FILE question_config_dialog.py (Corrected) ---

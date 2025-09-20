@@ -117,19 +117,78 @@
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout_3">
           <item>
-           <widget class="QLineEdit" name="first_api_url">
+           <widget class="QComboBox" name="first_api_url">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
-            <property name="text">
-             <string/>
+            <property name="maximumSize">
+             <size>
+              <width>170</width>
+              <height>16777215</height>
+             </size>
             </property>
-            <property name="placeholderText">
-             <string>API服务的URL地址</string>
+            <property name="editable">
+             <bool>false</bool>
             </property>
+            <property name="currentIndex">
+             <number>0</number>
+            </property>
+<item>
+ <property name="text">
+  <string>火山引擎 (推荐)</string>
+ </property>
+</item>
+            <item>
+             <property name="text">
+              <string>月之暗面</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>智谱清言</string>
+             </property>
+            </item>
+            <!-- <item>
+             <property name="text">
+              <string>deepseek</string>
+             </property>
+            </item> -->
+            <item>
+             <property name="text">
+              <string>阿里通义千问</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>百度文心千帆</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>腾讯混元</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>OpenRouter</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>OpenAI</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Google Gemini</string>
+             </property>
+            </item>
            </widget>
           </item>
           <item>
@@ -169,16 +228,72 @@
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout_4">
           <item>
-           <widget class="QLineEdit" name="second_api_url">
+           <widget class="QComboBox" name="second_api_url">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
-            <property name="placeholderText">
-             <string>API服务的URL地址（仅双评）</string>
+            <property name="maximumSize">
+             <size>
+              <width>170</width>
+              <height>16777215</height>
+             </size>
             </property>
+            <property name="currentIndex">
+             <number>0</number>
+            </property>
+<item>
+ <property name="text">
+  <string>火山引擎 (推荐)</string>
+ </property>
+</item>
+            <item>
+             <property name="text">
+              <string>月之暗面</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>智谱清言</string>
+             </property>
+            </item>
+            <!-- <item>
+             <property name="text">
+              <string>deepseek</string>
+             </property>
+            </item> -->
+            <item>
+             <property name="text">
+              <string>阿里通义千问</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>百度文心千帆</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>腾讯混元</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>OpenRouter</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>OpenAI</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Google Gemini</string>
+             </property>
+            </item>
            </widget>
           </item>
           <item>
@@ -203,7 +318,7 @@
              </sizepolicy>
             </property>
             <property name="placeholderText">
-             <string>AI视觉模型/ID</string>
+             <string>AI视觉模型/ID（此AI仅双评启用）</string>
             </property>
            </widget>
           </item>
