@@ -344,12 +344,16 @@ class Application:
         if worker:
             dual_evaluation = worker.parameters.get('dual_evaluation', False)
             question_count = len(worker.parameters.get('question_configs', []))
+            cycle_number = worker.parameters.get('cycle_number', 1)
         else:
             dual_evaluation = record_data.get('is_dual_evaluation_run', False)
             question_count = record_data.get('total_questions_in_run', 1)
+            cycle_number = record_data.get('total_cycles', 1)
 
         if question_count == 0:
             question_count = 1
+        if cycle_number == 0:
+            cycle_number = 1
 
         # 保持时间字符串为中文格式（用户要求）
         if '点' in time_str and '分' in time_str and '秒' in time_str:
@@ -366,7 +370,7 @@ class Application:
 
         # 保持日期为中文格式（用户要求）
         formatted_date = date_str  # 直接使用中文格式的日期
-        csv_filename = f"{formatted_date}_{formatted_time}_共{question_count}题_{'双评' if dual_evaluation else '单评'}.csv"
+        csv_filename = f"{formatted_date}_{formatted_time}_{question_count}题模式_{'双评' if dual_evaluation else '单评'}_本轮自动改卷{cycle_number}份.csv"
         csv_filepath = date_dir / csv_filename
 
         return csv_filepath
@@ -453,7 +457,7 @@ class Application:
                 return self._save_summary_record(record_data)
 
             # --- 1. 准备文件路径 ---
-            csv_filepath = self._get_csv_filepath(record_data)
+            csv_filepath = self._get_csv_filepath(record_data, self.worker)
             csv_filename = csv_filepath.name
             file_exists = os.path.isfile(csv_filepath)
 
