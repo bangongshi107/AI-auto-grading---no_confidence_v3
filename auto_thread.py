@@ -339,7 +339,7 @@ class AutoThread(QThread):
                         if not self.running: break
                         continue
 
-                    score, reasoning_data, itemized_scores_data, confidence_data = eval_result
+                    score, reasoning_data, itemized_scores_data, confidence_data, raw_ai_response = eval_result
 
                     # 如果评分处理失败，仍然记录错误信息，但不输入分数
                     if score is None:
@@ -361,7 +361,7 @@ class AutoThread(QThread):
                     self.progress_signal.emit(self.completed_count, total)
 
                     # 记录阅卷结果
-                    self.record_grading_result(question_index, score, img_str, reasoning_data, itemized_scores_data, confidence_data)
+                    self.record_grading_result(question_index, score, img_str, reasoning_data, itemized_scores_data, confidence_data, raw_ai_response)
 
                     # ... (后续的等待和翻页逻辑不变) ...
 
@@ -474,7 +474,7 @@ class AutoThread(QThread):
         协调API调用和响应处理，支持单评和双评模式。
         """
         # 调用第一个API并处理结果
-        score1, reasoning1, scores1, confidence1, error1 = self._call_and_process_single_api(
+        score1, reasoning1, scores1, confidence1, response_text1, error1 = self._call_and_process_single_api(
             self.api_service.call_first_api,
             img_str,
             prompt,
@@ -487,7 +487,7 @@ class AutoThread(QThread):
 
         # 如果不启用双评，直接返回第一个API的结果
         if not dual_evaluation:
-            return score1, reasoning1, scores1, confidence1
+            return score1, reasoning1, scores1, confidence1, response_text1
 
         # 如果启用双评，继续调用第二个API
         score2, reasoning2, scores2, confidence2, error2 = self._call_and_process_single_api(
@@ -503,8 +503,8 @@ class AutoThread(QThread):
 
         # 处理双评结果
         final_score, combined_reasoning, combined_scores, combined_confidence, error_dual = self._handle_dual_evaluation(
-            (score1, reasoning1, scores1, confidence1),
-            (score2, reasoning2, scores2, confidence2),
+            (score1, reasoning1, scores1, confidence1, response_text1),
+            (score2, reasoning2, scores2, confidence2, response_text2),
             score_diff_threshold
         )
         if error_dual:
@@ -517,9 +517,9 @@ class AutoThread(QThread):
         return final_score, combined_reasoning, combined_scores, combined_confidence
 
 
-    def _call_and_process_single_api(self, api_call_func, img_str, prompt, q_config, api_name="API"):
+    def _call_and_process_single_api(self, api_call_func, img_str, prompt, q_config, api_name="API", max_retries=3):
         """
-        调用指定的API函数，并处理其响应。
+        调用指定的API函数，并处理其响应。支持重试机制以提高稳定性。
 
         Args:
             api_call_func: 要调用的API服务方法 (e.g., self.api_service.call_first_api)
@@ -527,26 +527,45 @@ class AutoThread(QThread):
             prompt: 提示词
             q_config: 当前题目配置
             api_name: 用于日志的API名称
+            max_retries: 最大重试次数，默认3次
 
         Returns:
             一个元组 (score, reasoning, itemized_scores, confidence, error_message)
         """
-        self.log_signal.emit(f"正在调用{api_name}进行评分...", False)
-        response_text, error_from_call = api_call_func(img_str, prompt)
+        for attempt in range(max_retries):
+            if attempt > 0:
+                self.log_signal.emit(f"{api_name}第{attempt}次重试...", False)
+                time.sleep(1)  # 短暂延迟，避免过于频繁的请求
 
-        if error_from_call or not response_text:
-            error_msg = f"{api_name}调用失败或响应为空: {error_from_call}"
-            self.log_signal.emit(error_msg, True)
-            return None, None, None, None, error_msg
+            self.log_signal.emit(f"正在调用{api_name}进行评分... (尝试 {attempt + 1}/{max_retries})", False)
+            response_text, error_from_call = api_call_func(img_str, prompt)
 
-        score, reasoning, itemized_scores, confidence = self.process_api_response((response_text, None), q_config)
+            if error_from_call or not response_text:
+                error_msg = f"{api_name}调用失败或响应为空: {error_from_call}"
+                if attempt == max_retries - 1:  # 最后一次尝试失败
+                    self.log_signal.emit(error_msg, True)
+                    return None, None, None, None, response_text, error_msg
+                else:
+                    self.log_signal.emit(f"{error_msg}，准备重试...", True)
+                    continue
 
-        if score is None:
-            error_msg = f"{api_name}评分处理失败。错误: {reasoning}"
-            self.log_signal.emit(error_msg, True)
-            return None, None, None, None, error_msg
+            success, result_data = self.process_api_response((response_text, None), q_config)
 
-        return score, reasoning, itemized_scores, confidence, None
+            if success:
+                score, reasoning, itemized_scores, confidence = result_data
+                return score, reasoning, itemized_scores, confidence, response_text, None
+            else:
+                error_info = result_data
+                if attempt == max_retries - 1:  # 最后一次尝试的处理失败
+                    error_msg = f"{api_name}评分处理失败（已重试{max_retries}次）。错误: {error_info}"
+                    self.log_signal.emit(error_msg, True)
+                    return None, None, None, None, response_text, error_msg
+                else:
+                    self.log_signal.emit(f"{api_name}处理失败: {error_info}，准备重试...", True)
+                    continue
+
+        # 理论上不会到达这里，但为了安全
+        return None, None, None, None, f"{api_name}重试后仍失败"
 
     def _handle_dual_evaluation(self, result1, result2, score_diff_threshold):
         """
@@ -581,9 +600,11 @@ class AutoThread(QThread):
             'api1_summary': summary1,
             'api1_basis': basis1,
             'api1_raw_score': score1,
+            'api1_raw_response': response_text1,
             'api2_summary': summary2,
             'api2_basis': basis2,
             'api2_raw_score': score2,
+            'api2_raw_response': response_text2,
             'score_difference': score_diff
         }
 
@@ -603,37 +624,26 @@ class AutoThread(QThread):
 
     def process_api_response(self, response, current_question_config):
         """
-        处理API响应，期望响应为JSON格式。
+        处理API响应，期望响应为JSON格式。重构后不再直接设置错误状态，而返回成功标志和结果。
 
         Args:
             response: API服务调用返回的元组 (response_text, error_message)
             current_question_config: 当前题目的配置
 
         Returns:
-            (score, reasoning_tuple, itemized_scores, confidence_data):
-                score (float or None): 最终校验后的分数
-                reasoning_tuple (tuple or str):
-                    成功时为 (student_answer_summary, scoring_basis)
-                    失败时为错误信息字符串
-                itemized_scores (list or None): 从API响应中提取的分项得分列表
-                confidence_data (dict or None): 识别可信度数据
+            (success, result):
+                success (bool): 是否处理成功
+                result: 如果成功，为 (score, reasoning_tuple, itemized_scores, confidence_data) 元组
+                       如果失败，为错误信息字符串
         """
         response_text, error_from_api_call = response
 
         if error_from_api_call or not response_text:
             error_msg = f"API调用失败或响应为空: {error_from_api_call}"
             self.log_signal.emit(error_msg, True)
-            self._set_error_state(error_msg)
-            return None, error_msg, None, None
+            return False, error_msg
 
         try:
-            # try:
-            #     parsed_for_ui = json.loads(response_text)
-            #     formatted_response_for_ui = json.dumps(parsed_for_ui, ensure_ascii=False, indent=2)
-            #     self.update_signal.emit(f"原始JSON响应:\n{formatted_response_for_ui}")
-            # except json.JSONDecodeError:
-            #     self.update_signal.emit(f"原始响应 (非JSON或解析失败):\n{response_text}")
-
             self.log_signal.emit("尝试解析API响应JSON...", False)
 
             # 首先尝试直接解析
@@ -657,24 +667,18 @@ class AutoThread(QThread):
             student_answer_summary = data.get("student_answer_summary", "未能提取学生答案摘要")
             scoring_basis = data.get("scoring_basis", "未能提取评分依据")
             itemized_scores_from_json = data.get("itemized_scores")
-            # 此版本暂时不启用置信度功能，今后如果需要再启用
-            # confidence_data = data.get("recognition_confidence", {}) # 提取可信度，默认为空字典
-            confidence_data = {} # 置信度功能暂时停用
+            confidence_data = {}  # 置信度功能暂时停用
 
             self.log_signal.emit(f"从JSON提取的学生答案摘要: {student_answer_summary}", False)
-            self.log_signal.emit(f"从JSON提取的评分依据:\n{scoring_basis}", False)
             self.log_signal.emit(f"从JSON提取的分项得分列表: {itemized_scores_from_json}", False)
-            # 此版本暂时不启用置信度功能，今后如果需要再启用
-            # self.log_signal.emit(f"从JSON提取的可信度数据: {confidence_data}", False)
 
             calculated_total_score = 0.0
             numeric_scores_list_for_return = []
 
             if itemized_scores_from_json is None or not isinstance(itemized_scores_from_json, list):
-                error_msg = "API响应中'itemized_scores'缺失或格式错误 (应为列表)，阅卷已暂停，请检查API响应并手动处理当前题目。"
+                error_msg = "API响应中'itemized_scores'缺失或格式错误 (应为列表)"
                 self.log_signal.emit(error_msg, True)
-                self._set_error_state(error_msg)
-                return None, error_msg, None, None
+                return False, error_msg
 
             if not itemized_scores_from_json:
                 self.log_signal.emit("分项得分列表为空，判定总分为0。", False)
@@ -685,21 +689,22 @@ class AutoThread(QThread):
                     numeric_scores_list_for_return = [float(s) for s in itemized_scores_from_json]
                     calculated_total_score = sum(numeric_scores_list_for_return)
                 except (ValueError, TypeError) as e_sum:
-                    error_msg = f"API返回的分项得分 '{itemized_scores_from_json}' 包含无效内容或解析失败 (错误: {e_sum})，阅卷已暂停，请检查API响应并手动处理当前题目。"
+                    error_msg = f"API返回的分项得分 '{itemized_scores_from_json}' 包含无效内容或解析失败 (错误: {e_sum})"
                     self.log_signal.emit(error_msg, True)
-                    self._set_error_state(error_msg)
-                    return None, error_msg, None, None
+                    return False, error_msg
 
             self.log_signal.emit(f"根据itemized_scores计算得到的原始总分: {calculated_total_score}", False)
 
             final_score = self._validate_and_finalize_score(calculated_total_score, current_question_config)
 
             if final_score is None:
-                return None, "分数校验失败或超出范围", None, None
+                error_msg = "分数校验失败或超出范围"
+                return False, error_msg
 
-            reasoning_tuple = (student_answer_summary, scoring_basis)
+            reasoning_tuple = (student_answer_summary, data.get("scoring_basis", "未能提取评分依据"))
 
-            return final_score, reasoning_tuple, numeric_scores_list_for_return, confidence_data
+            result = (final_score, reasoning_tuple, numeric_scores_list_for_return, confidence_data)
+            return True, result
 
         except json.JSONDecodeError as e_json:
             error_msg = ("【API响应格式错误】模型返回的内容不是标准的JSON，无法解析。\n"
@@ -708,9 +713,7 @@ class AutoThread(QThread):
                          "2. 您使用的模型可能不完全兼容当前Prompt的JSON输出要求。\n"
                          "解决方案：请尝试重新运行。如果问题反复出现，建议更换模型或检查供应商服务状态。")
             self.log_signal.emit(f"{error_msg}\n原始响应(前200字符): '{response_text[:200]}...'", True)
-            self._set_error_state(error_msg)
-            # 返回错误信息和原始响应，以便记录到日志中
-            return None, (error_msg, response_text), None, None
+            return False, (error_msg, response_text)
         except (KeyError, IndexError) as e_key:
             error_msg = (f"【API响应结构错误】模型返回的JSON中缺少关键信息 (如: {str(e_key)})。\n"
                          f"可能原因：\n"
@@ -718,14 +721,12 @@ class AutoThread(QThread):
                          f"2. API供应商可能更新了其响应结构。\n"
                          f"解决方案：这是程序需要处理的兼容性问题。请将此错误反馈给开发者。")
             self.log_signal.emit(f"{error_msg}\n完整响应: {response_text}", True)
-            self._set_error_state(error_msg)
-            return None, error_msg, None, None
+            return False, error_msg
         except Exception as e_process:
             error_detail = traceback.format_exc()
             error_msg = f"处理API响应时发生未知错误: {str(e_process)}\n{error_detail}"
             self.log_signal.emit(error_msg, True)
-            self._set_error_state(error_msg)
-            return None, error_msg, None, None
+            return False, error_msg
 
     def _validate_and_finalize_score(self, total_score_from_json: float, current_question_config):
         """
@@ -766,15 +767,60 @@ class AutoThread(QThread):
         """
         从文本中提取JSON字符串。
         尝试找到第一个完整的JSON对象（以{开始，以}结束）。
+        增强版：处理常见的AI响应格式问题。
         """
         import re
         try:
-            # 使用正则表达式找到JSON对象
-            # 匹配最外层的{}，允许嵌套
+            # 清理常见的AI响应前缀和后缀
+            text = text.strip()
+
+            # 移除常见的markdown代码块标记
+            text = re.sub(r'^```\s*json\s*', '', text, flags=re.IGNORECASE)
+            text = re.sub(r'^```\s*', '', text)
+            text = re.sub(r'```\s*$', '', text)
+
+            # 移除可能的解释性文字
+            # 查找可能的JSON开始位置
+            start_pos = text.find('{')
+            if start_pos != -1:
+                text = text[start_pos:]
+            else:
+                return None
+
+            # 查找JSON结束位置（处理嵌套大括号）
+            brace_count = 0
+            end_pos = -1
+            for i, char in enumerate(text):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_pos = i
+                        break
+
+            if end_pos != -1:
+                candidate = text[:end_pos + 1]
+                # 验证提取的JSON字符串
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    pass  # 继续尝试其他方法
+
+            # 回退到正则表达式方法
+            # 使用正则表达式找到JSON对象，匹配最外层的{}，允许嵌套
             json_pattern = r'\{(?:[^{}]|{(?:[^{}]|{[^{}]*})*})*\}'
             match = re.search(json_pattern, text)
             if match:
-                return match.group(0)
+                candidate = match.group(0)
+                # 验证提取的JSON字符串
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    pass
+
             return None
         except Exception:
             return None
@@ -854,18 +900,12 @@ class AutoThread(QThread):
                     self._set_error_state("三步打分模式启用，但部分输入位置未配置，阅卷中止。")
                     return
 
-                # 重要设计前提：三步打分模式下，用户必定保证第一题的满分 (q_max_score) 是3的倍数，以确保三步打分的上限是合理的，使得 score_per_step_cap 是0.5的倍数
-                score_per_step_cap = q_max_score / 3.0
-                # 也处理一下 score_per_step_cap 到0.5的倍数，以防万一浮点数精度问题或用户配置非0.5倍数
-                score_per_step_cap = round_to_nearest_half(score_per_step_cap)
-                self.log_signal.emit(f"题目满分: {q_max_score}, 每步上限 (处理后): {score_per_step_cap}", False)
-
-                # 贪心法拆分 final_score_processed 为 s1, s2, s3
-                s1 = min(final_score_processed, score_per_step_cap)
-                remaining1 = final_score_processed - s1
-                s2 = min(remaining1, score_per_step_cap)
-                remaining2 = remaining1 - s2
-                s3 = remaining2 # s3 必然 <= score_per_step_cap
+                # 三步打分分配：按最大给分顺序，每步最高20分（高中作文每步20分上限）
+                # 先分配给第一步至多20分，再第二步，最后第三步
+                step_max = 20.0  # 每步最高20分
+                s1 = min(final_score_processed, step_max)
+                s2 = min(max(0, final_score_processed - s1), step_max)
+                s3 = max(0, final_score_processed - s1 - s2)
 
                 # 由于 final_score_processed 和 score_per_step_cap 都是0.5的倍数, s1,s2,s3也都是
                 self.log_signal.emit(f"三步拆分结果: s1={s1}, s2={s2}, s3={s3} (总和: {round_to_nearest_half(s1+s2+s3)})", False)
@@ -906,7 +946,7 @@ class AutoThread(QThread):
             if self.running: # 避免在已停止时重复设置错误
                 self._set_error_state(f"输入分数严重错误: {str(e)}")
 
-    def record_grading_result(self, question_index, score, img_str, reasoning_data, itemized_scores_data, confidence_data):
+    def record_grading_result(self, question_index, score, img_str, reasoning_data, itemized_scores_data, confidence_data, raw_ai_response=None):
         """记录阅卷结果，并发送信号 (重构后)"""
         try:
             # 1. 构建基础记录字典
@@ -930,9 +970,11 @@ class AutoThread(QThread):
                     'api1_student_answer_summary': reasoning_data.get('api1_summary', 'AI未提供'),
                     'api1_scoring_basis': reasoning_data.get('api1_basis', 'AI未提供'),
                     'api1_raw_score': reasoning_data.get('api1_raw_score', 0.0),
+                    'api1_raw_response': reasoning_data.get('api1_raw_response', 'AI未提供'),
                     'api2_student_answer_summary': reasoning_data.get('api2_summary', 'AI未提供'),
                     'api2_scoring_basis': reasoning_data.get('api2_basis', 'AI未提供'),
                     'api2_raw_score': reasoning_data.get('api2_raw_score', 0.0),
+                    'api2_raw_response': reasoning_data.get('api2_raw_response', 'AI未提供'),
                     'score_difference': reasoning_data.get('score_difference', 0.0),
                     'score_diff_threshold': self.parameters.get('score_diff_threshold', "AI未提供"),
                 })
@@ -972,6 +1014,7 @@ class AutoThread(QThread):
                         'student_answer': summary,
                         'reasoning_basis': basis,
                         'sub_scores': str(itemized_scores_data),
+                        'raw_ai_response': raw_ai_response,
                     })
                     # 此版本暂时不启用置信度功能，今后如果需要再启用
                     # if isinstance(confidence_data, dict):

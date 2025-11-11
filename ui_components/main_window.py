@@ -5,7 +5,7 @@ import os
 import traceback
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QMessageBox, QDialog,
                              QComboBox, QLineEdit, QCheckBox, QSpinBox,
-                             QPlainTextEdit, QApplication, QShortcut)
+                             QPlainTextEdit, QApplication, QShortcut, QLabel, QPushButton)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QKeySequence
 from PyQt5 import uic
@@ -45,6 +45,37 @@ class MainWindow(QMainWindow):
         self._ui_cache = {}
 
         self.init_ui()
+
+        # 添加缓存UI元素
+        self.cache_status_label = QLabel("")
+        self.cache_status_label.setStyleSheet("color: orange; font-weight: bold;")
+        self.merge_cache_button = QPushButton("添加最新阅卷记录")
+        self.merge_cache_button.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; }"
+                                               "QPushButton:hover { background-color: #45a049; }"
+                                               "QPushButton:pressed { background-color: #3e8e41; }"
+                                               "QPushButton:disabled { background-color: #cccccc; color: #666666; }")
+        self.merge_cache_button.clicked.connect(self.request_merge_cache)
+        self.merge_cache_button.hide()
+
+        # 查找UI中的合适区域添加缓存控件（假设有一个水平布局区域）
+        # 这里需要根据实际UI文件找到合适的位置，比如日志区域上方
+        # 临时添加到一个假设的位置，实际使用时需要调整
+        from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout
+        # 假设有log_text布局的父级，添加缓存区域
+        log_widget = self.get_ui_element('log_text')
+        if log_widget and log_widget.parent():
+            parent_layout = log_widget.parent().layout()
+            if parent_layout:
+                # 创建水平布局添加缓存控件
+                cache_layout = QHBoxLayout()
+                cache_layout.addWidget(self.cache_status_label)
+                cache_layout.addStretch()
+                cache_layout.addWidget(self.merge_cache_button)
+
+                # 将缓存布局插入到日志上方
+                if hasattr(parent_layout, 'insertLayout'):
+                    parent_layout.insertLayout(parent_layout.count() - 1, cache_layout)
+
         self.show()
         self._is_initializing = False
         self.log_message("主窗口初始化完成")
@@ -635,5 +666,32 @@ class MainWindow(QMainWindow):
             checkbox = self.get_ui_element(f'enableQuestion{i}')
             if checkbox:
                 checkbox.stateChanged.connect(self.on_question_enabled_changed)
+
+    # 缓存合并相关方法
+    def update_cache_status(self, message):
+        """更新缓存状态显示"""
+        if hasattr(self, 'cache_status_label') and self.cache_status_label:
+            self.cache_status_label.setText(message)
+
+    def show_merge_button(self, show):
+        """显示或隐藏合并按钮"""
+        if hasattr(self, 'cache_status_label') and self.cache_status_label:
+            self.cache_status_label.setVisible(show)
+        if hasattr(self, 'merge_cache_button') and self.merge_cache_button:
+            self.merge_cache_button.setVisible(show)
+            self.merge_cache_button.setEnabled(show)
+
+    def request_merge_cache(self):
+        """请求合并缓存记录"""
+        # 通过信号发送到Application类
+        # 假设Application类有连接的槽
+        # 这里发出一个信号或者直接调用
+        # 由于MainWindow不知道Application实例，我们需要通过信号
+        # 临时：使用一个自定义信号
+        from PyQt5.QtCore import pyqtSignal
+        if not hasattr(self, 'merge_requested_signal'):
+            self.merge_requested_signal = pyqtSignal()
+            # 在Application中连接: self.main_window.merge_requested_signal.connect(self.manual_merge_records)
+        self.merge_requested_signal.emit()
 
 # --- END OF FILE main_window.py ---

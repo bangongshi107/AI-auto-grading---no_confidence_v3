@@ -325,7 +325,7 @@ class QuestionConfigDialog(QDialog):
         score_group = QGroupBox("注意：本软件固定步长0.5，请确保阅卷网站步长已设为0.5")
         score_group_content_layout = QHBoxLayout() 
         
-        score_group_content_layout.addWidget(QLabel("最高分（满分）:"))
+        score_group_content_layout.addWidget(QLabel("打分上限:"))
         self.max_score_edit = QSpinBox()
         self.max_score_edit.setMinimum(0)
         self.max_score_edit.setMaximum(150)
@@ -333,7 +333,7 @@ class QuestionConfigDialog(QDialog):
         score_group_content_layout.addWidget(self.max_score_edit)
         score_group_content_layout.addSpacing(50) # 添加伸缩空间
         
-        score_group_content_layout.addWidget(QLabel("最低分:"))
+        score_group_content_layout.addWidget(QLabel("打分下限："))
         self.min_score_edit = QSpinBox()
         self.min_score_edit.setMinimum(0)
         self.min_score_edit.setMaximum(150)
@@ -392,7 +392,7 @@ class QuestionConfigDialog(QDialog):
             three_step_group = QGroupBox("")
             three_step_group_main_layout = QVBoxLayout() 
 
-            self.three_step_scoring_checkbox = QCheckBox("启用 最终得分分成三份 输入三个位置 (仅第一题生效）")
+            self.three_step_scoring_checkbox = QCheckBox("60'作文专用 最终得分分3份输入3个位置 (仅第一题可用）")
             enable_three_step_from_config = self.question_config.get('enable_three_step_scoring', False)
             self.three_step_scoring_checkbox.setChecked(enable_three_step_from_config)
 
@@ -854,6 +854,12 @@ class QuestionConfigDialog(QDialog):
     def toggle_three_step_mode_ui(self, checked):
         """根据三步打分模式复选框状态，切换UI元素的启用/禁用"""
         if self.question_index == 1: # 确保只对第一题操作
+            # 当启用三步打分时，自动设置满分上限为60（高中作文默认）
+            if checked:
+                self.max_score_edit.setValue(60)  # 三步打分默认60分
+            else:
+                self.max_score_edit.setValue(100)  # 禁用时恢复默认100分
+
             # 切换原有单点分数输入组的启用状态
             if self.original_score_input_group:
                 self.original_score_input_group.setEnabled(not checked)

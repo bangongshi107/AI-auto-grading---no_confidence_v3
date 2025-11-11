@@ -12,6 +12,7 @@ from auto_thread import AutoThread
 import winsound
 import csv
 import traceback
+import pandas as pd
 
 class SimpleNotificationDialog(QDialog):
     def __init__(self, title, message, sound_type='info', parent=None):
@@ -119,6 +120,10 @@ class Application:
         self.worker = AutoThread(self.api_service)
         self.main_window = MainWindow(self.config_manager, self.api_service, self.worker)
         self.signal_manager = SignalConnectionManager()
+
+        # 初始化缓存系统
+        self.cache_dir = pathlib.Path(__file__).parent / "阅卷记录" / ".cache"
+        self.cache_dir.mkdir(exist_ok=True, parents=True)
 
         self._setup_application()
 
@@ -232,6 +237,13 @@ class Application:
                     self.show_threshold_exceeded_notification # 这个方法内部需要调用 main_window.on_worker_error
                 )
 
+            # 合并缓存请求
+            if hasattr(self.main_window, 'merge_requested_signal'):
+                self.signal_manager.connect(
+                    self.main_window.merge_requested_signal,
+                    self.manual_merge_records
+                )
+
         except Exception as e:
             # 避免在 main_window 可能还未完全初始化时调用其 log_message
             print(f"[CRITICAL_ERROR] 连接工作线程信号时出错: {str(e)}")
@@ -301,19 +313,135 @@ class Application:
 
         self.main_window.log_message("配置已成功加载并应用。")
 
-    def _get_csv_filepath(self, record_data, worker=None):
-        """获取CSV文件路径的辅助函数"""
+    def is_file_locked(self, filepath):
+        """检查文件是否被锁定（主要因被其他进程打开）"""
+        try:
+            with open(filepath, 'a'):
+                pass
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
+
+    def cache_records(self, excel_filepath, rows, headers=None):
+        """缓存无法写入的记录"""
+        import json
+        excel_name = excel_filepath.name
+        cache_file = self.cache_dir / f"{excel_name}.json"
+
+        if cache_file.exists():
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            data['records'].extend(rows)
+        else:
+            data = {
+                'excel_path': str(excel_filepath),
+                'headers': headers,
+                'records': rows
+            }
+
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        count = len(data['records'])
+        excel_display_name = excel_name.replace('.xlsx', '')
+        self.main_window.update_cache_status(f"有{count}条新阅卷记录等待添加进[{excel_display_name}]，请选择 添加最新阅卷记录")
+        self.main_window.show_merge_button(True)
+
+    def check_and_merge_cache(self, excel_name):
+        """检查并合并指定Excel的缓存记录"""
+        import json
+        cache_file = self.cache_dir / f"{excel_name}.json"
+        if not cache_file.exists():
+            return
+
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+
+        excel_filepath = pathlib.Path(cache_data['excel_path'])
+        headers = cache_data['headers']
+        records = cache_data['records']
+
+        try:
+            # 读取现有Excel文件或创建新的
+            if excel_filepath.exists():
+                try:
+                    existing_df = pd.read_excel(excel_filepath, header=0)
+                    new_df = pd.DataFrame(records, columns=headers)
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                except Exception as e:
+                    self.main_window.log_message(f"读取现有Excel文件失败: {str(e)}，将覆盖文件", True)
+                    combined_df = pd.DataFrame(records, columns=headers)
+            else:
+                combined_df = pd.DataFrame(records, columns=headers)
+
+            # 写入Excel文件并设置格式
+            with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
+                combined_df.to_excel(writer, index=False, sheet_name='阅卷记录')
+
+                # 获取工作簿和工作表
+                workbook = writer.book
+                worksheet = writer.sheets['阅卷记录']
+
+                # 设置列宽
+                column_widths = {
+                    'A': 15,  # 时间
+                    'B': 10,  # 题目编号
+                    'C': 10,  # API标识
+                    'D': 10,  # 分差阈值
+                    'E': 80,  # 学生答案摘要（增加宽度以容纳较长的AI回答）
+                    'F': 100, # 评分依据（增加宽度以容纳详细的评分理由）
+                    'G': 20,  # AI分项得分
+                    'H': 15,  # AI原始总分/最终得分
+                    'I': 12,  # 双评分差
+                    'J': 12   # 最终得分
+                }
+
+                for col, width in column_widths.items():
+                    if col in worksheet.column_dimensions:
+                        worksheet.column_dimensions[col].width = width
+
+                # 设置自动换行
+                from openpyxl.styles import Alignment
+                wrap_alignment = Alignment(wrap_text=True, vertical='top')
+
+                for row in worksheet.iter_rows():
+                    for cell in row:
+                        cell.alignment = wrap_alignment
+
+                # 设置标题行格式
+                from openpyxl.styles import Font
+                header_font = Font(bold=True)
+                for cell in worksheet[1]:
+                    cell.font = header_font
+
+            self.main_window.log_message(f"成功合并 {len(records)} 条记录到 {excel_name}")
+            cache_file.unlink()
+            self.main_window.update_cache_status("")
+            self.main_window.show_merge_button(False)
+        except Exception as e:
+            self.main_window.log_message(f"合并缓存失败: {str(e)}", True)
+            excel_display_name = excel_name
+            self.main_window.update_cache_status(f"有{len(records)}条记录等待添加进[{excel_display_name}]，请选择 添加最新阅卷记录")
+
+    def manual_merge_records(self):
+        """手动触发合并所有缓存记录"""
+        for cache_file in self.cache_dir.glob('*.json'):
+            excel_name = cache_file.stem
+            self.check_and_merge_cache(excel_name)
+
+    def _get_excel_filepath(self, record_data, worker=None):
+        """获取Excel文件路径的辅助函数"""
         timestamp_str = record_data.get('timestamp', datetime.datetime.now().strftime('%Y年%m月%d日_%H点%M分%S秒'))
 
         # 处理日期字符串，支持中文格式
         if '_' in timestamp_str:
             date_str = timestamp_str.split('_')[0]
-            time_str = timestamp_str.split('_')[1]
         else:
             # 如果没有下划线，使用当前时间
             now = datetime.datetime.now()
             date_str = now.strftime('%Y年%m月%d日')
-            time_str = now.strftime('%H点%M分%S秒')
 
         # 转换日期格式：从中文格式提取数字部分用于目录命名
         if '年' in date_str and '月' in date_str and '日' in date_str:
@@ -338,64 +466,51 @@ class Application:
         record_dir = base_dir / "阅卷记录"
         record_dir.mkdir(exist_ok=True)
 
-        date_dir = record_dir / numeric_date_str
+        date_dir = record_dir / date_str
         date_dir.mkdir(exist_ok=True)
 
         if worker:
             dual_evaluation = worker.parameters.get('dual_evaluation', False)
-            question_count = len(worker.parameters.get('question_configs', []))
-            cycle_number = worker.parameters.get('cycle_number', 1)
+            question_configs = worker.parameters.get('question_configs', {})
+            question_count = len(question_configs)
+            full_score = question_configs.get('1', {}).get('max_score', 100)
         else:
             dual_evaluation = record_data.get('is_dual_evaluation_run', False)
             question_count = record_data.get('total_questions_in_run', 1)
-            cycle_number = record_data.get('total_cycles', 1)
+            full_score = 100  # 默认值
 
         if question_count == 0:
             question_count = 1
-        if cycle_number == 0:
-            cycle_number = 1
 
-        # 保持时间字符串为中文格式（用户要求）
-        if '点' in time_str and '分' in time_str and '秒' in time_str:
-            formatted_time = time_str
+        evaluation_type = '双评' if dual_evaluation else '单评'
+
+        if question_count == 1:
+            excel_filename = f"此题最高{full_score}分_{evaluation_type}.xlsx"
         else:
-            # 如果时间不是中文格式，尝试转换
-            try:
-                if len(time_str) == 6 and time_str.isdigit():
-                    formatted_time = f"{time_str[:2]}点{time_str[2:4]}分{time_str[4:6]}秒"
-                else:
-                    formatted_time = datetime.datetime.now().strftime('%H点%M分%S秒')
-            except:
-                formatted_time = datetime.datetime.now().strftime('%H点%M分%S秒')
+            excel_filename = f"共阅{question_count}题_{evaluation_type}.xlsx"
 
-        # 保持日期为中文格式（用户要求）
-        formatted_date = date_str  # 直接使用中文格式的日期
-        csv_filename = f"{formatted_date}_{formatted_time}_{question_count}题模式_{'双评' if dual_evaluation else '单评'}_本轮自动改卷{cycle_number}份.csv"
-        csv_filepath = date_dir / csv_filename
+        excel_filepath = date_dir / excel_filename
 
-        return csv_filepath
+        return excel_filepath
 
     def _save_summary_record(self, record_data):
-        """保存汇总记录到对应的CSV文件
+        """保存汇总记录到对应的Excel文件
 
         Args:
             record_data: 汇总记录数据
         """
         try:
-            import csv
-            import os
+            excel_filepath = self._get_excel_filepath(record_data, self.worker)
+            excel_filename = excel_filepath.name
 
-            csv_filepath = self._get_csv_filepath(record_data, self.worker)
-            csv_filename = csv_filepath.name
-
-            # 从 record_data 构建汇总行，而不是依赖 summary_text
+            # 从 record_data 构建汇总行
             status_map = {
                 "completed": "正常完成",
                 "error": "因错误中断",
                 "threshold_exceeded": "因双评分差过大中断"
             }
             status_text = status_map.get(record_data.get('completion_status', 'unknown'), "未知状态")
-            
+
             interrupt_reason = record_data.get('interrupt_reason')
             if interrupt_reason:
                 status_text += f" ({interrupt_reason})"
@@ -411,35 +526,61 @@ class Application:
             else:
                 formatted_summary_time = timestamp_raw
 
-            summary_fields = [
+            summary_data = [
                 f"--- 批次阅卷汇总 ({formatted_summary_time}) ---",
                 f"状态: {status_text}",
                 f"计划/完成: {record_data.get('total_questions_attempted', '未提供')} / {record_data.get('questions_completed', '未提供')} 个",
                 f"总用时: {record_data.get('total_elapsed_time_seconds', 0):.2f} 秒",
                 f"模式: {'双评' if record_data.get('dual_evaluation_enabled') else '单评'}",
             ]
-            
+
             if record_data.get('dual_evaluation_enabled'):
-                summary_fields.append(f"模型: {record_data.get('first_model_id', '未指定')} vs {record_data.get('second_model_id', '未指定')}")
+                summary_data.append(f"模型: {record_data.get('first_model_id', '未指定')} vs {record_data.get('second_model_id', '未指定')}")
             else:
-                summary_fields.append(f"模型: {record_data.get('first_model_id', '未指定')}")
+                summary_data.append(f"模型: {record_data.get('first_model_id', '未指定')}")
 
-            # 追加汇总行到文件并在前后添加空白行
-            with open(csv_filepath, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f)
-                # 汇总行前添加2行空白行
-                writer.writerow([])
-                writer.writerow([])
-                # 写入汇总行
-                writer.writerow(summary_fields)
-                # 汇总行后添加4行空白行，以区分不同批次阅卷记录
-                writer.writerow([])
-                writer.writerow([])
-                writer.writerow([])
-                writer.writerow([])
+            # 读取现有Excel文件或创建新的
+            if excel_filepath.exists():
+                try:
+                    existing_df = pd.read_excel(excel_filepath, header=0)
+                    # 添加空白行
+                    blank_rows = pd.DataFrame([[""] * len(existing_df.columns)] * 2)
+                    summary_df = pd.DataFrame([summary_data + [""] * (len(existing_df.columns) - len(summary_data))], columns=existing_df.columns)
+                    more_blank_rows = pd.DataFrame([[""] * len(existing_df.columns)] * 4)
+                    combined_df = pd.concat([existing_df, blank_rows, summary_df, more_blank_rows], ignore_index=True)
+                except Exception as e:
+                    self.main_window.log_message(f"读取现有Excel文件失败: {str(e)}，将创建新文件", True)
+                    combined_df = pd.DataFrame([summary_data], columns=["汇总信息"])
+            else:
+                combined_df = pd.DataFrame([summary_data], columns=["汇总信息"])
 
-            self.main_window.log_message(f"已保存汇总记录到: {csv_filename}")
-            return csv_filepath
+            # 写入Excel文件
+            with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
+                combined_df.to_excel(writer, index=False, sheet_name='阅卷记录')
+
+                # 获取工作簿和工作表
+                workbook = writer.book
+                worksheet = writer.sheets['阅卷记录']
+
+                # 设置列宽
+                column_widths = {
+                    'A': 80,  # 汇总信息列
+                }
+
+                for col, width in column_widths.items():
+                    if col in worksheet.column_dimensions:
+                        worksheet.column_dimensions[col].width = width
+
+                # 设置自动换行
+                from openpyxl.styles import Alignment
+                wrap_alignment = Alignment(wrap_text=True, vertical='top')
+
+                for row in worksheet.iter_rows():
+                    for cell in row:
+                        cell.alignment = wrap_alignment
+
+            self.main_window.log_message(f"已保存汇总记录到: {excel_filename}")
+            return excel_filepath
 
         except Exception as e:
             self.main_window.log_message(f"保存汇总记录失败: {str(e)}", is_error=True)
@@ -447,9 +588,9 @@ class Application:
 
     def save_grading_record(self, record_data):
         """
-        重构后的保存阅卷记录到CSV文件的方法。
-        - 动态构建CSV表头和行数据，支持单评和双评模式。
-        - 包含可信度分数和理由，并对低可信度项进行标记。
+        重构后的保存阅卷记录到Excel文件的方法。
+        - 动态构建Excel表头和行数据，支持单评和双评模式。
+        - 设置列宽和格式，便于在Excel中查看。
         """
         try:
             # 记录汇总信息
@@ -457,18 +598,11 @@ class Application:
                 return self._save_summary_record(record_data)
 
             # --- 1. 准备文件路径 ---
-            csv_filepath = self._get_csv_filepath(record_data, self.worker)
-            csv_filename = csv_filepath.name
-            file_exists = os.path.isfile(csv_filepath)
+            excel_filepath = self._get_excel_filepath(record_data, self.worker)
+            excel_filename = excel_filepath.name
+            file_exists = excel_filepath.exists()
 
-            # --- 2. 格式化函数 ---
-            # 此版本暂时不启用置信度功能，今后如果需要再启用
-            # def format_confidence(score_value):
-            #     if score_value in [1, "1"]: return "!! 1"
-            #     if score_value in [2, "2"]: return "!! 2"
-            #     return str(score_value) if score_value is not None else "未提供"
-
-            # --- 3. 动态构建表头和行 ---
+            # --- 2. 动态构建表头和行 ---
             is_dual = record_data.get('is_dual_evaluation', False)
             timestamp_raw = record_data.get('timestamp', '')
             if '_' in timestamp_raw:
@@ -483,95 +617,102 @@ class Application:
             final_total_score_str = str(record_data.get('total_score', 0))
 
             headers = ["时间", "题目编号"]
-            base_row = [timestamp_str, question_index_str]
             rows_to_write = []
 
             if is_dual:
-                # 此版本暂时不启用置信度功能，今后如果需要再启用
-                # headers.extend(["API标识", "分差阈值", "学生答案摘要", "评分依据", "AI分项得分", "AI原始总分", "识别可信度", "可信度理由", "双评分差", "最终得分"])
                 headers.extend(["API标识", "分差阈值", "学生答案摘要", "评分依据", "AI分项得分", "AI原始总分", "双评分差", "最终得分"])
-                
-                # 此版本暂时不启用置信度功能，今后如果需要再启用
-                # row1 = base_row + [
-                #     "API-1",
-                #     str(record_data.get('score_diff_threshold', "未提供")),
-                #     record_data.get('api1_student_answer_summary', '未提供'),
-                #     record_data.get('api1_scoring_basis', '未提供'),
-                #     str(record_data.get('api1_itemized_scores', [])),
-                #     str(record_data.get('api1_raw_score', 0.0)),
-                #     format_confidence(record_data.get('api1_confidence_score')),
-                #     record_data.get('api1_confidence_reason', '未提供'),
-                #     f"{record_data.get('score_difference', 0.0):.2f}",
-                #     final_total_score_str
-                # ]
-                # row2 = base_row + [
-                #     "API-2",
-                #     str(record_data.get('score_diff_threshold', "未提供")),
-                #     record_data.get('api2_student_answer_summary', '未提供'),
-                #     record_data.get('api2_scoring_basis', '未提供'),
-                #     str(record_data.get('api2_itemized_scores', [])),
-                #     str(record_data.get('api2_raw_score', 0.0)),
-                #     format_confidence(record_data.get('api2_confidence_score')),
-                #     record_data.get('api2_confidence_reason', '未提供'),
-                #     f"{record_data.get('score_difference', 0.0):.2f}",
-                #     final_total_score_str
-                # ]
-                row1 = base_row + [
-                    "API-1",
-                    str(record_data.get('score_diff_threshold', "未提供")),
-                    record_data.get('api1_student_answer_summary', '未提供'),
-                    record_data.get('api1_scoring_basis', '未提供'),
-                    str(record_data.get('api1_itemized_scores', [])),
-                    str(record_data.get('api1_raw_score', 0.0)),
-                    f"{record_data.get('score_difference', 0.0):.2f}",
-                    final_total_score_str
-                ]
-                row2 = base_row + [
-                    "API-2",
-                    str(record_data.get('score_diff_threshold', "未提供")),
-                    record_data.get('api2_student_answer_summary', '未提供'),
-                    record_data.get('api2_scoring_basis', '未提供'),
-                    str(record_data.get('api2_itemized_scores', [])),
-                    str(record_data.get('api2_raw_score', 0.0)),
-                    f"{record_data.get('score_difference', 0.0):.2f}",
-                    final_total_score_str
-                ]
+
+                row1 = [timestamp_str, question_index_str, "API-1",
+                       str(record_data.get('score_diff_threshold', "未提供")),
+                       record_data.get('api1_student_answer_summary', '未提供'),
+                       record_data.get('api1_scoring_basis', '未提供'),
+                       str(record_data.get('api1_itemized_scores', [])),
+                       str(record_data.get('api1_raw_score', 0.0)),
+                       f"{record_data.get('score_difference', 0.0):.2f}",
+                       final_total_score_str]
+                row2 = [timestamp_str, question_index_str, "API-2",
+                       str(record_data.get('score_diff_threshold', "未提供")),
+                       record_data.get('api2_student_answer_summary', '未提供'),
+                       record_data.get('api2_scoring_basis', '未提供'),
+                       str(record_data.get('api2_itemized_scores', [])),
+                       str(record_data.get('api2_raw_score', 0.0)),
+                       f"{record_data.get('score_difference', 0.0):.2f}",
+                       final_total_score_str]
                 rows_to_write.extend([row1, row2])
             else: # 单评模式
-                # 此版本暂时不启用置信度功能，今后如果需要再启用
-                # headers.extend(["学生答案摘要", "评分依据", "AI分项得分", "识别可信度", "可信度理由", "最终得分"])
                 headers.extend(["学生答案摘要", "评分依据", "AI分项得分", "最终得分"])
-                
-                # 此版本暂时不启用置信度功能，今后如果需要再启用
-                # single_row = base_row + [
-                #     record_data.get('student_answer', '无法提取'),
-                #     record_data.get('reasoning_basis', '无法提取'),
-                #     record_data.get('sub_scores', '未提供'),
-                #     format_confidence(record_data.get('confidence_score')),
-                #     record_data.get('confidence_reason', '未提供'),
-                #     final_total_score_str
-                # ]
-                single_row = base_row + [
-                    record_data.get('student_answer', '无法提取'),
-                    record_data.get('reasoning_basis', '无法提取'),
-                    record_data.get('sub_scores', '未提供'),
-                    final_total_score_str
-                ]
+
+                single_row = [timestamp_str, question_index_str,
+                             record_data.get('student_answer', '无法提取'),
+                             record_data.get('reasoning_basis', '无法提取'),
+                             record_data.get('sub_scores', '未提供'),
+                             final_total_score_str]
                 rows_to_write.append(single_row)
 
-            # --- 4. 写入文件 ---
-            with open(csv_filepath, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(headers)
-                writer.writerows(rows_to_write)
+            # --- 3. 写入Excel文件 ---
+            if file_exists:
+                # 如果文件存在，读取现有数据并追加
+                try:
+                    existing_df = pd.read_excel(excel_filepath, header=0)
+                    new_df = pd.DataFrame(rows_to_write, columns=headers)
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                except Exception as e:
+                    self.main_window.log_message(f"读取现有Excel文件失败: {str(e)}，将覆盖文件", True)
+                    combined_df = pd.DataFrame(rows_to_write, columns=headers)
+            else:
+                combined_df = pd.DataFrame(rows_to_write, columns=headers)
 
-            self.main_window.log_message(f"已保存阅卷记录到: {csv_filename}")
-            return csv_filepath
+            # 使用openpyxl引擎写入并设置格式
+            with pd.ExcelWriter(excel_filepath, engine='openpyxl') as writer:
+                combined_df.to_excel(writer, index=False, sheet_name='阅卷记录')
+
+                # 获取工作簿和工作表
+                workbook = writer.book
+                worksheet = writer.sheets['阅卷记录']
+
+                # 设置列宽
+                column_widths = {
+                    'A': 15,  # 时间
+                    'B': 10,  # 题目编号
+                    'C': 10,  # API标识
+                    'D': 10,  # 分差阈值
+                    'E': 80,  # 学生答案摘要（增加宽度以容纳较长的AI回答）
+                    'F': 100, # 评分依据（增加宽度以容纳详细的评分理由）
+                    'G': 20,  # AI分项得分
+                    'H': 15,  # AI原始总分/最终得分
+                    'I': 12,  # 双评分差
+                    'J': 12   # 最终得分
+                }
+
+                for col, width in column_widths.items():
+                    if col in worksheet.column_dimensions:
+                        worksheet.column_dimensions[col].width = width
+
+                # 设置自动换行
+                from openpyxl.styles import Alignment
+                wrap_alignment = Alignment(wrap_text=True, vertical='top')
+
+                for row in worksheet.iter_rows():
+                    for cell in row:
+                        cell.alignment = wrap_alignment
+
+                # 设置标题行格式
+                from openpyxl.styles import Font
+                header_font = Font(bold=True)
+                for cell in worksheet[1]:
+                    cell.font = header_font
+
+            self.main_window.log_message(f"已保存阅卷记录到: {excel_filename}")
+            return excel_filepath
 
         except Exception as e:
             error_detail_full = traceback.format_exc()
-            self.main_window.log_message(f"保存阅卷记录失败: {str(e)}\n详细错误:\n{error_detail_full}", is_error=True)
+            # 尝试缓存失败的记录
+            if self.is_file_locked(excel_filepath):
+                self.main_window.log_message("文件被占用，缓存记录以便稍后合并", True)
+                self.cache_records(excel_filepath, rows_to_write, headers)
+            else:
+                self.main_window.log_message(f"保存阅卷记录失败: {str(e)}\n详细错误:\n{error_detail_full}", is_error=True)
             return None
 
     def start_auto_evaluation(self):

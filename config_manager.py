@@ -50,7 +50,7 @@ class ConfigManager:
         self.score_diff_threshold = 5
         self.subject = ""
         self.cycle_number = 1
-        self.wait_time = 1
+        self.wait_time = 2
         
         self.question_configs = {}
         for i in range(1, self.max_questions + 1):
@@ -102,7 +102,7 @@ class ConfigManager:
         self.score_diff_threshold = self._get_config_safe('DualEvaluation', 'score_diff_threshold', 5, int)
         self.subject = self._get_config_safe('UI', 'subject', "")
         self.cycle_number = self._get_config_safe('Auto', 'cycle_number', 1, int)
-        self.wait_time = self._get_config_safe('Auto', 'wait_time', 1, int)
+        self.wait_time = self._get_config_safe('Auto', 'wait_time', 2, int)
         
         for i in range(1, self.max_questions + 1):
             section_name = f'Question{i}'
@@ -180,7 +180,7 @@ class ConfigManager:
         elif field_name == 'second_modelID': self.second_modelID = str(value) if value else ""
         elif field_name == 'subject': self.subject = str(value) if value else ""
         elif field_name == 'cycle_number': self.cycle_number = max(1, int(value)) if value else 1
-        elif field_name == 'wait_time': self.wait_time = max(1, int(value)) if value else 1
+        elif field_name == 'wait_time': self.wait_time = max(2, int(value)) if value else 2
         elif field_name == 'dual_evaluation_enabled': self.dual_evaluation_enabled = bool(value)
         elif field_name == 'score_diff_threshold': self.score_diff_threshold = max(1, int(value)) if value else 5
         elif field_name.startswith('question_'): self._update_question_config_from_field_name(field_name, value)
